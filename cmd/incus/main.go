@@ -6,24 +6,24 @@ import (
 	"os"
 	"os/user"
 	"path"
-	"path/filepath"
 	"slices"
 
 	"github.com/spf13/cobra"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	cli "github.com/lxc/incus/v6/internal/cmd"
 	"github.com/lxc/incus/v6/internal/i18n"
 	internalUtil "github.com/lxc/incus/v6/internal/util"
 	"github.com/lxc/incus/v6/internal/version"
 	"github.com/lxc/incus/v6/shared/api"
+	"github.com/lxc/incus/v6/shared/ask"
 	config "github.com/lxc/incus/v6/shared/cliconfig"
 	"github.com/lxc/incus/v6/shared/logger"
 	"github.com/lxc/incus/v6/shared/util"
 )
 
 type cmdGlobal struct {
-	asker cli.Asker
+	asker ask.Asker
 
 	conf     *config.Config
 	confPath string
@@ -70,6 +70,27 @@ Use "{{.CommandPath}} [command] --help" for more information about a command.{{e
 `
 }
 
+func aliases() []string {
+	c, err := config.LoadConfig("")
+	if err != nil {
+		return nil
+	}
+
+	aliases := make([]string, 0, len(defaultAliases)+len(c.Aliases))
+
+	// Add default aliases
+	for alias := range defaultAliases {
+		aliases = append(aliases, alias)
+	}
+
+	// Add user-defined aliases
+	for alias := range c.Aliases {
+		aliases = append(aliases, alias)
+	}
+
+	return aliases
+}
+
 func main() {
 	// Process aliases
 	err := execIfAliases()
@@ -92,9 +113,10 @@ Custom commands can be defined through aliases, use "incus alias" to control tho
 	app.SilenceUsage = true
 	app.SilenceErrors = true
 	app.CompletionOptions = cobra.CompletionOptions{HiddenDefaultCmd: true}
+	app.ValidArgs = aliases()
 
 	// Global flags
-	globalCmd := cmdGlobal{cmd: app, asker: cli.NewAsker(bufio.NewReader(os.Stdin))}
+	globalCmd := cmdGlobal{cmd: app, asker: ask.NewAsker(bufio.NewReader(os.Stdin))}
 
 	app.PersistentFlags().BoolVar(&globalCmd.flagVersion, "version", false, i18n.G("Print version number"))
 	app.PersistentFlags().BoolVarP(&globalCmd.flagHelp, "help", "h", false, i18n.G("Print help"))
@@ -265,6 +287,10 @@ Custom commands can be defined through aliases, use "incus alias" to control tho
 	warningCmd := cmdWarning{global: &globalCmd}
 	app.AddCommand(warningCmd.Command())
 
+	// webui sub-command
+	webuiCmd := cmdWebui{global: &globalCmd}
+	app.AddCommand(webuiCmd.Command())
+
 	// Get help command
 	app.InitDefaultHelpCmd()
 	var help *cobra.Command
@@ -332,23 +358,6 @@ func (c *cmdGlobal) PreRun(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Figure out the config directory and config path
-	var configDir string
-	if os.Getenv("INCUS_CONF") != "" {
-		configDir = os.Getenv("INCUS_CONF")
-	} else if os.Getenv("HOME") != "" && util.PathExists(os.Getenv("HOME")) {
-		configDir = path.Join(os.Getenv("HOME"), ".config", "incus")
-	} else {
-		user, err := user.Current()
-		if err != nil {
-			return err
-		}
-
-		if util.PathExists(user.HomeDir) {
-			configDir = path.Join(user.HomeDir, ".config", "incus")
-		}
-	}
-
 	// Figure out a potential cache path.
 	var cachePath string
 	if os.Getenv("INCUS_CACHE") != "" {
@@ -373,24 +382,17 @@ func (c *cmdGlobal) PreRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// If no homedir could be found, treat as if --force-local was passed.
-	if configDir == "" {
+	c.conf, err = config.LoadConfig("")
+	if err != nil {
+		return fmt.Errorf(i18n.G("Failed to load configuration: %s"), err)
+	}
+
+	// If no config dir could be found, treat as if --force-local was passed.
+	if c.conf.ConfigDir == "" {
 		c.flagForceLocal = true
 	}
 
-	c.confPath = os.ExpandEnv(path.Join(configDir, "config.yml"))
-
-	// Load the configuration
-	if c.flagForceLocal {
-		c.conf = config.NewConfig("", true)
-	} else if util.PathExists(c.confPath) {
-		c.conf, err = config.LoadConfig(c.confPath)
-		if err != nil {
-			return err
-		}
-	} else {
-		c.conf = config.NewConfig(filepath.Dir(c.confPath), true)
-	}
+	c.confPath = c.conf.ConfigPath("config.yml")
 
 	// Set cache directory in config.
 	c.conf.CacheDir = cachePath
@@ -404,7 +406,7 @@ func (c *cmdGlobal) PreRun(cmd *cobra.Command, args []string) error {
 
 	// Setup password helper
 	c.conf.PromptPassword = func(filename string) (string, error) {
-		return cli.AskPasswordOnce(fmt.Sprintf(i18n.G("Password for %s: "), filename)), nil
+		return ask.AskPasswordOnce(fmt.Sprintf(i18n.G("Password for %s: "), filename)), nil
 	}
 
 	// If the user is running a command that may attempt to connect to the local daemon

@@ -10,14 +10,16 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
 	"github.com/lxc/incus/v6/internal/server/auth"
 	"github.com/lxc/incus/v6/internal/server/cluster"
+	clusterRequest "github.com/lxc/incus/v6/internal/server/cluster/request"
 	"github.com/lxc/incus/v6/internal/server/db"
 	dbCluster "github.com/lxc/incus/v6/internal/server/db/cluster"
 	"github.com/lxc/incus/v6/internal/server/db/operationtype"
 	"github.com/lxc/incus/v6/internal/server/instance"
+	"github.com/lxc/incus/v6/internal/server/instance/instancetype"
 	"github.com/lxc/incus/v6/internal/server/operations"
 	"github.com/lxc/incus/v6/internal/server/project"
 	"github.com/lxc/incus/v6/internal/server/request"
@@ -233,9 +235,15 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 				return response.BadRequest(fmt.Errorf("Instance must be stopped to be moved statelessly"))
 			}
 
-			// Storage pool changes require a stopped instance.
+			// Storage pool changes require a target flag.
 			if req.Pool != "" {
-				return response.BadRequest(fmt.Errorf("Instance must be stopped to be moved across storage pools"))
+				if inst.Type() != instancetype.VM {
+					return response.BadRequest(fmt.Errorf("Storage pool change supported only by virtual-machines"))
+				}
+
+				if target == "" {
+					return response.BadRequest(fmt.Errorf("Storage pool can be specified only together with target flag"))
+				}
 			}
 
 			// Project changes require a stopped instance.
@@ -336,7 +344,7 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 						Devices: inst.ExpandedDevices().CloneNative(),
 					},
 				},
-				Project: projectName,
+				Project: instProject,
 				Reason:  apiScriptlet.InstancePlacementReasonRelocation,
 			}
 
@@ -367,13 +375,11 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 				}
 			}
 
-			err := s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
-				targetMemberInfo, err = tx.GetNodeWithLeastInstances(ctx, filteredCandidateMembers)
-				return err
-			})
-			if err != nil {
-				return response.SmartError(err)
+			if len(filteredCandidateMembers) == 0 {
+				return response.InternalError(fmt.Errorf("Couldn't find a cluster member for the instance"))
 			}
+
+			targetMemberInfo = &filteredCandidateMembers[0]
 		}
 
 		if targetMemberInfo.IsOffline(s.GlobalConfig.OfflineThreshold()) {
@@ -434,7 +440,7 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Cross-server instance migration.
-	ws, err := newMigrationSource(inst, req.Live, req.InstanceOnly, req.AllowInconsistent, "", req.Target)
+	ws, err := newMigrationSource(inst, req.Live, req.InstanceOnly, req.AllowInconsistent, "", "", req.Target)
 	if err != nil {
 		return response.InternalError(err)
 	}
@@ -475,6 +481,11 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 	sourcePool, err := storagePools.LoadByInstance(s, inst)
 	if err != nil {
 		return fmt.Errorf("Failed loading instance storage pool: %w", err)
+	}
+
+	// Check that we're not requested to move to the same storage pool we're currently use.
+	if req.Pool != "" && req.Pool == sourcePool.Name() {
+		return fmt.Errorf("Requested storage pool is the same as current pool")
 	}
 
 	// Get the DB volume type for the instance.
@@ -594,10 +605,15 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 		req.Name = ""
 	}
 
-	// Handle pool and project moves.
-	if req.Project != "" || req.Pool != "" {
+	// Handle pool and project moves for stopped instances.
+	if (req.Project != "" || req.Pool != "") && !req.Live {
 		// Get a local client.
-		target, err := incus.ConnectIncusUnix(s.OS.GetUnixSocket(), nil)
+		args := &incus.ConnectionArgs{
+			SkipGetServer: true,
+			UserAgent:     clusterRequest.UserAgentClient,
+		}
+
+		target, err := incus.ConnectIncusUnix(s.OS.GetUnixSocket(), args)
 		if err != nil {
 			return err
 		}
@@ -636,13 +652,18 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 					return err
 				}
 
+				profileConfigs, err := dbCluster.GetConfig(ctx, tx.Tx(), "profile")
+				if err != nil {
+					return err
+				}
+
 				profileDevices, err := dbCluster.GetDevices(ctx, tx.Tx(), "profile")
 				if err != nil {
 					return err
 				}
 
 				for _, profile := range rawProfiles {
-					apiProfile, err := profile.ToAPI(ctx, tx.Tx(), profileDevices)
+					apiProfile, err := profile.ToAPI(ctx, tx.Tx(), profileConfigs, profileDevices)
 					if err != nil {
 						return err
 					}
@@ -747,7 +768,7 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 		req.Project = ""
 	}
 
-	// Handle remote migrations (location changes).
+	// Handle remote migrations (location and storage pool changes).
 	if targetMemberInfo != nil && inst.Location() != targetMemberInfo.Name {
 		// Get the client.
 		networkCert := s.Endpoints.NetworkCert()
@@ -785,7 +806,7 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 		}
 
 		// Setup a new migration source.
-		sourceMigration, err := newMigrationSource(inst, req.Live, false, req.AllowInconsistent, inst.Name(), nil)
+		sourceMigration, err := newMigrationSource(inst, req.Live, false, req.AllowInconsistent, inst.Name(), req.Pool, nil)
 		if err != nil {
 			return fmt.Errorf("Failed setting up instance migration on source: %w", err)
 		}
@@ -909,8 +930,9 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 			return err
 		}
 
-		// Cleanup instance paths on source member if using remote shared storage.
-		if sourcePool.Driver().Info().Remote {
+		// Cleanup instance paths on source member if using remote shared storage
+		// and there was no storage pool change.
+		if sourcePool.Driver().Info().Remote && req.Pool == "" {
 			err = sourcePool.CleanupInstancePaths(inst, nil)
 			if err != nil {
 				return fmt.Errorf("Failed cleaning up instance paths on source member: %w", err)

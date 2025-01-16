@@ -12,13 +12,13 @@ import (
 	"github.com/lxc/incus/v6/internal/instancewriter"
 	"github.com/lxc/incus/v6/internal/linux"
 	"github.com/lxc/incus/v6/internal/migration"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/backup"
 	localMigration "github.com/lxc/incus/v6/internal/server/migration"
 	"github.com/lxc/incus/v6/internal/server/operations"
 	"github.com/lxc/incus/v6/internal/server/project"
 	"github.com/lxc/incus/v6/internal/server/state"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/subprocess"
 	"github.com/lxc/incus/v6/shared/util"
 )
@@ -240,12 +240,7 @@ func (d *common) Logger() logger.Logger {
 
 // Config returns the storage pool config (as a copy, so not modifiable).
 func (d *common) Config() map[string]string {
-	confCopy := make(map[string]string, len(d.config))
-	for k, v := range d.config {
-		confCopy[k] = v
-	}
-
-	return confCopy
+	return util.CloneMap(d.config)
 }
 
 // ApplyPatch looks for a suitable patch and runs it.

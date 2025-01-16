@@ -54,7 +54,6 @@ To use this with Incus, you must:
 - Enable `lvmlockd` by setting `use_lvmlockd = 1` in your `/etc/lvm/lvm.conf`
 - Set a unique (within your cluster) `host_id` value in `/etc/lvm/lvmlocal.conf`
 - Ensure that both `lvmlockd` and `sanlock` daemons are running
-- Create a shared VG and confirm it is accessible on all servers
 
 ## Configuration options
 
@@ -86,6 +85,9 @@ Key                   | Type   | Condition                                      
 :--                   | :---   | :------                                           | :------                                        | :----------
 `block.filesystem`    | string | block-based volume with content type `filesystem` | same as `volume.block.filesystem`              | {{block_filesystem}}
 `block.mount_options` | string | block-based volume with content type `filesystem` | same as `volume.block.mount_options`           | Mount options for block-backed file system volumes
+`initial.gid`           | int       | custom volume with content type `filesystem`  | same as `volume.initial.uid` or `0`           | GID of the volume owner in the instance
+`initial.mode`          | int       | custom volume with content type `filesystem`  | same as `volume.initial.mode` or `711`        | Mode  of the volume in the instance
+`initial.uid`           | int       | custom volume with content type `filesystem`  | same as `volume.initial.gid` or `0`           | UID of the volume owner in the instance
 `lvm.stripes`         | string |                                                   | same as `volume.lvm.stripes`                   | Number of stripes to use for new volumes (or thin pool volume)
 `lvm.stripes.size`    | string |                                                   | same as `volume.lvm.stripes.size`              | Size of stripes to use (at least 4096 bytes and multiple of 512 bytes)
 `security.shifted`    | bool   | custom volume                                     | same as `volume.security.shifted` or `false`   | {{enable_ID_shifting}}

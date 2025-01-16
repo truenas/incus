@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -71,7 +72,7 @@ func restServer(d *Daemon) *http.Server {
 	mux.UseEncodedPath() // Allow encoded values in path segments.
 
 	uiPath := os.Getenv("INCUS_UI")
-	uiEnabled := uiPath != "" && util.PathExists(uiPath)
+	uiEnabled := uiPath != "" && util.PathExists(fmt.Sprintf("%s/index.html", uiPath))
 	if uiEnabled {
 		uiHttpDir := uiHttpDir{http.Dir(uiPath)}
 		mux.PathPrefix("/ui/").Handler(http.StripPrefix("/ui/", http.FileServer(uiHttpDir)))
@@ -419,6 +420,10 @@ func setCORSHeaders(rw http.ResponseWriter, req *http.Request, config *clusterCo
 // taken on this node as well.
 func isClusterNotification(r *http.Request) bool {
 	return r.Header.Get("User-Agent") == clusterRequest.UserAgentNotifier
+}
+
+func isClusterInternal(r *http.Request) bool {
+	return r.Header.Get("User-Agent") == clusterRequest.UserAgentClient
 }
 
 type uiHttpDir struct {

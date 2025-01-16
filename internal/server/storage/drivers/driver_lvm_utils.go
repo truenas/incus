@@ -9,15 +9,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
 
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
 	"github.com/lxc/incus/v6/internal/linux"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/locking"
 	"github.com/lxc/incus/v6/internal/server/operations"
 	"github.com/lxc/incus/v6/internal/version"
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/subprocess"
 	"github.com/lxc/incus/v6/shared/units"
 	"github.com/lxc/incus/v6/shared/util"
@@ -555,7 +558,17 @@ func (d *lvm) lvmDevPath(vgName string, volType VolumeType, contentType ContentT
 
 // resizeLogicalVolume resizes an LVM logical volume. This function does not resize any filesystem inside the LV.
 func (d *lvm) resizeLogicalVolume(lvPath string, sizeBytes int64) error {
-	_, err := subprocess.TryRunCommand("lvresize", "-L", fmt.Sprintf("%db", sizeBytes), "-f", lvPath)
+	isRecent, err := d.lvmVersionIsAtLeast(lvmVersion, "2.03.17")
+	if err != nil {
+		return fmt.Errorf("Error checking LVM version: %w", err)
+	}
+
+	args := []string{"-L", fmt.Sprintf("%db", sizeBytes), "-f", lvPath}
+	if isRecent {
+		args = append(args, "--fs=ignore")
+	}
+
+	_, err = subprocess.TryRunCommand("lvresize", args...)
 	if err != nil {
 		return err
 	}
@@ -732,7 +745,7 @@ func (d *lvm) thinPoolVolumeUsage(volDevPath string) (uint64, uint64, error) {
 		"--units", "b",
 		"--nosuffix",
 		"--separator", ",",
-		"-o", "lv_size,data_percent,metadata_percent",
+		"-o", "lv_size,data_percent",
 	}
 
 	out, err := subprocess.RunCommand("lvs", args...)
@@ -741,7 +754,7 @@ func (d *lvm) thinPoolVolumeUsage(volDevPath string) (uint64, uint64, error) {
 	}
 
 	parts := util.SplitNTrimSpace(out, ",", -1, true)
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return 0, 0, fmt.Errorf("Unexpected output from lvs command")
 	}
 
@@ -762,17 +775,7 @@ func (d *lvm) thinPoolVolumeUsage(volDevPath string) (uint64, uint64, error) {
 		return 0, 0, fmt.Errorf("Failed parsing thin volume used percentage (%q): %w", parts[1], err)
 	}
 
-	metaPerc := float64(0)
-
-	// For thin volumes there is no meta data percentage. This is only for the thin pool volume itself.
-	if parts[2] != "" {
-		metaPerc, err = strconv.ParseFloat(parts[2], 64)
-		if err != nil {
-			return 0, 0, fmt.Errorf("Failed parsing thin pool meta used percentage (%q): %w", parts[2], err)
-		}
-	}
-
-	usedSize := uint64(float64(total) * ((dataPerc + metaPerc) / 100))
+	usedSize := uint64(float64(total) * (dataPerc / 100))
 
 	return totalSize, usedSize, nil
 }
@@ -878,4 +881,23 @@ func (d *lvm) deactivateVolume(vol Volume) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func (d *lvm) getBlockSize(path string) (int, error) {
+	// Open the block device.
+	f, err := os.Open(path)
+	if err != nil {
+		return -1, err
+	}
+
+	defer func() { _ = f.Close() }()
+
+	// Query the physical block size.
+	var res int32
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(f.Fd()), unix.BLKPBSZGET, uintptr(unsafe.Pointer(&res)))
+	if errno != 0 {
+		return -1, fmt.Errorf("Failed to BLKPBSZGET: %w", unix.Errno(errno))
+	}
+
+	return int(res), nil
 }

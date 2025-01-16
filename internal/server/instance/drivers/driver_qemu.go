@@ -40,14 +40,13 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v2"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
 	"github.com/lxc/incus/v6/internal/instancewriter"
 	"github.com/lxc/incus/v6/internal/jmap"
 	"github.com/lxc/incus/v6/internal/linux"
 	"github.com/lxc/incus/v6/internal/migration"
 	"github.com/lxc/incus/v6/internal/ports"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/apparmor"
 	"github.com/lxc/incus/v6/internal/server/cgroup"
 	"github.com/lxc/incus/v6/internal/server/db"
@@ -84,6 +83,7 @@ import (
 	"github.com/lxc/incus/v6/shared/ioprogress"
 	"github.com/lxc/incus/v6/shared/logger"
 	"github.com/lxc/incus/v6/shared/osarch"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/subprocess"
 	localtls "github.com/lxc/incus/v6/shared/tls"
 	"github.com/lxc/incus/v6/shared/units"
@@ -357,7 +357,7 @@ type qemu struct {
 // otherwise the qmp.Connect call will fail to use the monitor socket file.
 func (d *qemu) getAgentClient() (*http.Client, error) {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return nil, err
 	}
@@ -535,7 +535,7 @@ func (d *qemu) generateAgentCert() (string, string, string, string, error) {
 // Freeze freezes the instance.
 func (d *qemu) Freeze() error {
 	// Connect to the monitor.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -732,7 +732,7 @@ func (d *qemu) Shutdown(timeout time.Duration) error {
 	}
 
 	// Connect to the monitor.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		op.Done(err)
 		return err
@@ -757,17 +757,8 @@ func (d *qemu) Shutdown(timeout time.Duration) error {
 	// Wait 500ms for the first event to be received by the guest.
 	time.Sleep(500 * time.Millisecond)
 
-	// Send a second system_powerdown command (required to get Windows to shutdown).
-	err = monitor.Powerdown()
-	if err != nil {
-		if err == qmp.ErrMonitorDisconnect {
-			op.Done(nil)
-			return nil
-		}
-
-		op.Done(err)
-		return err
-	}
+	// Attempt to send a second system_powerdown command (required to get Windows to shutdown).
+	_ = monitor.Powerdown()
 
 	d.logger.Debug("Shutdown request sent to instance")
 
@@ -1118,7 +1109,7 @@ func (d *qemu) checkStateStorage() error {
 		memoryLimitStr = d.expandedConfig["limits.memory"]
 	}
 
-	memoryLimit, err := units.ParseByteSizeString(memoryLimitStr)
+	memoryLimit, err := ParseMemoryStr(memoryLimitStr)
 	if err != nil {
 		return err
 	}
@@ -1149,7 +1140,7 @@ func (d *qemu) startupHook(monitor *qmp.Monitor, stage string) error {
 
 		for _, command := range commandList {
 			jsonCommand, _ := json.Marshal(command)
-			err = monitor.RunJSON(jsonCommand, nil)
+			err = monitor.RunJSON(jsonCommand, nil, true)
 			if err != nil {
 				err = fmt.Errorf("Failed to run QMP command %s at %s stage: %w", jsonCommand, stage, err)
 				return err
@@ -1219,7 +1210,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 	defer revert.Fail()
 
 	// Rotate the log files.
-	for _, logfile := range []string{d.LogFilePath(), d.common.ConsoleBufferLogPath()} {
+	for _, logfile := range []string{d.LogFilePath(), d.common.ConsoleBufferLogPath(), d.QMPLogFilePath()} {
 		if util.PathExists(logfile) {
 			_ = os.Remove(logfile + ".old")
 			err := os.Rename(logfile, logfile+".old")
@@ -1646,6 +1637,13 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 			}
 		}
 
+		// Change ownership of main instance directory.
+		err = os.Chown(d.Path(), int(d.state.OS.UnprivUID), -1)
+		if err != nil {
+			op.Done(err)
+			return fmt.Errorf("Failed to chown instance path: %w", err)
+		}
+
 		// Change ownership of config directory files so they are accessible to the
 		// unprivileged qemu process so that the 9p share can work.
 		//
@@ -1708,8 +1706,12 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		forkLimitsCmd = append(forkLimitsCmd, fmt.Sprintf("fd=%d", 3+i))
 	}
 
+	// Log the QEMU command line.
+	fullCmd := append(forkLimitsCmd, qemuCmd...)
+	d.logger.Debug("Starting QEMU", logger.Ctx{"command": fullCmd})
+
 	// Setup background process.
-	p, err := subprocess.NewProcess(d.state.OS.ExecPath, append(forkLimitsCmd, qemuCmd...), d.EarlyLogFilePath(), d.EarlyLogFilePath())
+	p, err := subprocess.NewProcess(d.state.OS.ExecPath, fullCmd, d.EarlyLogFilePath(), d.EarlyLogFilePath())
 	if err != nil {
 		op.Done(err)
 		return err
@@ -1760,7 +1762,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 	})
 
 	// Start QMP monitoring.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		op.Done(err)
 		return err
@@ -2333,7 +2335,7 @@ func (d *qemu) deviceAttachPath(deviceName string, configCopy map[string]string,
 	defer reverter.Fail()
 
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return fmt.Errorf("Failed to connect to QMP monitor: %w", err)
 	}
@@ -2411,7 +2413,7 @@ func (d *qemu) deviceAttachPath(deviceName string, configCopy map[string]string,
 
 func (d *qemu) deviceAttachBlockDevice(deviceName string, configCopy map[string]string, mount deviceConfig.MountEntryItem) error {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return fmt.Errorf("Failed to connect to QMP monitor: %w", err)
 	}
@@ -2435,7 +2437,7 @@ func (d *qemu) deviceDetachPath(deviceName string, rawConfig deviceConfig.Device
 	mountTag := fmt.Sprintf("incus_%s", deviceName)
 
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -2468,7 +2470,7 @@ func (d *qemu) deviceDetachPath(deviceName string, rawConfig deviceConfig.Device
 
 func (d *qemu) deviceDetachBlockDevice(deviceName string, rawConfig deviceConfig.Device) error {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -2528,7 +2530,7 @@ func (d *qemu) deviceAttachNIC(deviceName string, configCopy map[string]string, 
 	}
 
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -2563,7 +2565,7 @@ func (d *qemu) deviceAttachNIC(deviceName string, configCopy map[string]string, 
 
 func (d *qemu) getPCIHotplug() (string, error) {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return "", err
 	}
@@ -2598,7 +2600,7 @@ func (d *qemu) deviceAttachPCI(deviceName string, configCopy map[string]string, 
 	defer reverter.Fail()
 
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -2741,7 +2743,7 @@ func (d *qemu) deviceStop(dev device.Device, instanceRunning bool, _ string) err
 // deviceDetachNIC detaches a NIC device from a running instance.
 func (d *qemu) deviceDetachNIC(deviceName string) error {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -2795,7 +2797,7 @@ func (d *qemu) deviceDetachNIC(deviceName string) error {
 // deviceDetachPCI detaches a generic PCI device from a running instance.
 func (d *qemu) deviceDetachPCI(deviceName string) error {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -3673,7 +3675,7 @@ func (d *qemu) generateQemuConfigFile(cpuInfo *cpuTopology, mountInfo *storagePo
 
 		// Add TPM device.
 		if len(runConf.TPMDevice) > 0 {
-			err = d.addTPMDeviceConfig(&cfg, runConf.TPMDevice)
+			err = d.addTPMDeviceConfig(&cfg, runConf.TPMDevice, fdFiles)
 			if err != nil {
 				return "", nil, err
 			}
@@ -3821,7 +3823,7 @@ func (d *qemu) addCPUMemoryConfig(cfg *[]cfgSection, cpuInfo *cpuTopology) error
 		memSize = qemudefault.MemSize // Default if no memory limit specified.
 	}
 
-	memSizeBytes, err := units.ParseByteSizeString(memSize)
+	memSizeBytes, err := ParseMemoryStr(memSize)
 	if err != nil {
 		return fmt.Errorf("limits.memory invalid: %w", err)
 	}
@@ -4857,7 +4859,7 @@ func (d *qemu) addUSBDeviceConfig(usbDev deviceConfig.USBDeviceItem) (monitorHoo
 	return monHook, nil
 }
 
-func (d *qemu) addTPMDeviceConfig(cfg *[]cfgSection, tpmConfig []deviceConfig.RunConfigItem) error {
+func (d *qemu) addTPMDeviceConfig(cfg *[]cfgSection, tpmConfig []deviceConfig.RunConfigItem, fdFiles *[]*os.File) error {
 	var devName, socketPath string
 
 	for _, tpmItem := range tpmConfig {
@@ -4868,9 +4870,16 @@ func (d *qemu) addTPMDeviceConfig(cfg *[]cfgSection, tpmConfig []deviceConfig.Ru
 		}
 	}
 
+	fd, err := unix.Open(socketPath, unix.O_PATH, 0)
+	if err != nil {
+		return err
+	}
+
+	tpmFD := d.addFileDescriptor(fdFiles, os.NewFile(uintptr(fd), socketPath))
+
 	tpmOpts := qemuTPMOpts{
 		devName: devName,
-		path:    socketPath,
+		path:    fmt.Sprintf("/proc/self/fd/%d", tpmFD),
 	}
 	*cfg = append(*cfg, qemuTPM(&tpmOpts)...)
 
@@ -4962,11 +4971,8 @@ func (d *qemu) Stop(stateful bool) error {
 		}
 	}
 
-	// Save the console log from ring buffer before the instance is stopped. Must be run prior to creating the operation lock.
-	_, err := d.ConsoleLog()
-	if err != nil {
-		return err
-	}
+	// Attempt to save the console log from ring buffer before the instance is stopped. Must be run prior to creating the operation lock.
+	_, _ = d.ConsoleLog()
 
 	// Setup a new operation.
 	// Allow inheriting of ongoing restart or restore operation (we are called from restartCommon and Restore).
@@ -4984,7 +4990,7 @@ func (d *qemu) Stop(stateful bool) error {
 	}
 
 	// Connect to the monitor.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		d.logger.Warn("Failed connecting to monitor, forcing stop", logger.Ctx{"err": err})
 
@@ -5092,7 +5098,7 @@ func (d *qemu) Stop(stateful bool) error {
 // Unfreeze restores the instance to running.
 func (d *qemu) Unfreeze() error {
 	// Connect to the monitor.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -5136,7 +5142,7 @@ func (d *qemu) snapshot(name string, expiry time.Time, stateful bool) error {
 		}
 
 		// Connect to the monitor.
-		monitor, err = qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+		monitor, err = qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 		if err != nil {
 			return err
 		}
@@ -6014,7 +6020,7 @@ func (d *qemu) updateMemoryLimit(newLimit string) error {
 	}
 
 	// Check new size string is valid and convert to bytes.
-	newSizeBytes, err := units.ParseByteSizeString(newLimit)
+	newSizeBytes, err := ParseMemoryStr(newLimit)
 	if err != nil {
 		return fmt.Errorf("Invalid memory size: %w", err)
 	}
@@ -6022,7 +6028,7 @@ func (d *qemu) updateMemoryLimit(newLimit string) error {
 	newSizeMB := newSizeBytes / 1024 / 1024
 
 	// Connect to the monitor.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err // The VM isn't running as no monitor socket available.
 	}
@@ -6342,16 +6348,14 @@ func (d *qemu) delete(force bool) error {
 }
 
 // Export publishes the instance.
-func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (api.ImageMetadata, error) {
+func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (*api.ImageMetadata, error) {
 	ctxMap := logger.Ctx{
 		"created":   d.creationDate,
 		"ephemeral": d.ephemeral,
 		"used":      d.lastUsedDate}
 
-	meta := api.ImageMetadata{}
-
 	if d.IsRunning() {
-		return meta, fmt.Errorf("Cannot export a running instance as an image")
+		return nil, fmt.Errorf("Cannot export a running instance as an image")
 	}
 
 	d.logger.Info("Exporting instance", ctxMap)
@@ -6360,7 +6364,7 @@ func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time
 	mountInfo, err := d.mount()
 	if err != nil {
 		d.logger.Error("Failed exporting instance", ctxMap)
-		return meta, err
+		return nil, err
 	}
 
 	defer func() { _ = d.unmount() }()
@@ -6386,167 +6390,119 @@ func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time
 		return nil
 	}
 
-	// Look for metadata.yaml.
-	fnam := filepath.Join(cDir, "metadata.yaml")
-	if !util.PathExists(fnam) {
-		// Generate a new metadata.yaml.
-		tempDir, err := os.MkdirTemp("", "incus_metadata_")
+	// Get the instance's architecture.
+	var arch string
+	if d.IsSnapshot() {
+		parentName, _, _ := api.GetParentAndSnapshotName(d.name)
+		parent, err := instance.LoadByProjectAndName(d.state, d.project.Name, parentName)
 		if err != nil {
 			_ = tarWriter.Close()
 			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
+			return nil, err
 		}
 
-		defer func() { _ = os.RemoveAll(tempDir) }()
-
-		// Get the instance's architecture.
-		var arch string
-		if d.IsSnapshot() {
-			parentName, _, _ := api.GetParentAndSnapshotName(d.name)
-			parent, err := instance.LoadByProjectAndName(d.state, d.project.Name, parentName)
-			if err != nil {
-				_ = tarWriter.Close()
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
-
-			arch, _ = osarch.ArchitectureName(parent.Architecture())
-		} else {
-			arch, _ = osarch.ArchitectureName(d.architecture)
-		}
-
-		if arch == "" {
-			arch, err = osarch.ArchitectureName(d.state.OS.Architectures[0])
-			if err != nil {
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
-		}
-
-		// Fill in the metadata.
-		meta.Architecture = arch
-		meta.CreationDate = time.Now().UTC().Unix()
-		meta.Properties = properties
-		if !expiration.IsZero() {
-			meta.ExpiryDate = expiration.UTC().Unix()
-		}
-
-		data, err := yaml.Marshal(&meta)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
-
-		// Write the actual file.
-		fnam = filepath.Join(tempDir, "metadata.yaml")
-		err = os.WriteFile(fnam, data, 0644)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
-
-		fi, err := os.Lstat(fnam)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
-
-		tmpOffset := len(filepath.Dir(fnam)) + 1
-		err = tarWriter.WriteFile(fnam[tmpOffset:], fnam, fi, false)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
+		arch, _ = osarch.ArchitectureName(parent.Architecture())
 	} else {
+		arch, _ = osarch.ArchitectureName(d.architecture)
+	}
+
+	if arch == "" {
+		arch, err = osarch.ArchitectureName(d.state.OS.Architectures[0])
+		if err != nil {
+			d.logger.Error("Failed exporting instance", ctxMap)
+			return nil, err
+		}
+	}
+
+	// Generate metadata.yaml.
+	meta := api.ImageMetadata{}
+	fnam := filepath.Join(cDir, "metadata.yaml")
+
+	if util.PathExists(fnam) {
 		// Parse the metadata.
 		content, err := os.ReadFile(fnam)
 		if err != nil {
 			_ = tarWriter.Close()
 			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
+			return nil, err
 		}
 
 		err = yaml.Unmarshal(content, &meta)
 		if err != nil {
 			_ = tarWriter.Close()
 			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
+			return nil, err
 		}
+	}
 
-		if !expiration.IsZero() {
-			meta.ExpiryDate = expiration.UTC().Unix()
-		}
+	// Fill in the metadata.
+	meta.Architecture = arch
+	meta.CreationDate = time.Now().UTC().Unix()
 
-		if properties != nil {
-			meta.Properties = properties
-		}
+	if meta.Properties == nil {
+		meta.Properties = map[string]string{}
+	}
 
-		if properties != nil || !expiration.IsZero() {
-			// Generate a new metadata.yaml.
-			tempDir, err := os.MkdirTemp("", "incus_metadata_")
-			if err != nil {
-				_ = tarWriter.Close()
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
+	for k, v := range properties {
+		meta.Properties[k] = v
+	}
 
-			defer func() { _ = os.RemoveAll(tempDir) }()
+	if !expiration.IsZero() {
+		meta.ExpiryDate = expiration.UTC().Unix()
+	}
 
-			data, err := yaml.Marshal(&meta)
-			if err != nil {
-				_ = tarWriter.Close()
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
+	// Write the new metadata.yaml.
+	tempDir, err := os.MkdirTemp("", "incus_metadata_")
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
+	}
 
-			// Write the actual file.
-			fnam = filepath.Join(tempDir, "metadata.yaml")
-			err = os.WriteFile(fnam, data, 0644)
-			if err != nil {
-				_ = tarWriter.Close()
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
-		}
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
-		// Include metadata.yaml in the tarball.
-		fi, err := os.Lstat(fnam)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Debug("Error statting during export", logger.Ctx{"fileName": fnam})
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
+	data, err := yaml.Marshal(&meta)
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
+	}
 
-		if properties != nil || !expiration.IsZero() {
-			tmpOffset := len(filepath.Dir(fnam)) + 1
-			err = tarWriter.WriteFile(fnam[tmpOffset:], fnam, fi, false)
-		} else {
-			err = tarWriter.WriteFile(fnam[offset:], fnam, fi, false)
-		}
+	fnam = filepath.Join(tempDir, "metadata.yaml")
+	err = os.WriteFile(fnam, data, 0644)
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
+	}
 
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Debug("Error writing to tarfile", logger.Ctx{"err": err})
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
+	// Add metadata.yaml to the tarball.
+	fi, err := os.Lstat(fnam)
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
+	}
+
+	tmpOffset := len(filepath.Dir(fnam)) + 1
+	err = tarWriter.WriteFile(fnam[tmpOffset:], fnam, fi, false)
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Debug("Error writing to tarfile", logger.Ctx{"err": err})
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
 	}
 
 	// Convert from raw to qcow2 and add to tarball.
 	tmpPath, err := os.MkdirTemp(internalUtil.VarPath("images"), "incus_export_")
 	if err != nil {
-		return meta, err
+		return nil, err
 	}
 
 	defer func() { _ = os.RemoveAll(tmpPath) }()
 
 	if mountInfo.DiskPath == "" {
-		return meta, fmt.Errorf("No disk path available from mount")
+		return nil, fmt.Errorf("No disk path available from mount")
 	}
 
 	fPath := fmt.Sprintf("%s/rootfs.img", tmpPath)
@@ -6579,19 +6535,19 @@ func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time
 
 	_, err = apparmor.QemuImg(d.state.OS, cmd, mountInfo.DiskPath, fPath, tracker)
 	if err != nil {
-		return meta, fmt.Errorf("Failed converting instance to qcow2: %w", err)
+		return nil, fmt.Errorf("Failed converting instance to qcow2: %w", err)
 	}
 
 	// Read converted file info and write file to tarball.
-	fi, err := os.Lstat(fPath)
+	fi, err = os.Lstat(fPath)
 	if err != nil {
-		return meta, err
+		return nil, err
 	}
 
 	imgOffset := len(tmpPath) + 1
 	err = tarWriter.WriteFile(fPath[imgOffset:], fPath, fi, false)
 	if err != nil {
-		return meta, err
+		return nil, err
 	}
 
 	// Include all the templates.
@@ -6600,19 +6556,19 @@ func (d *qemu) Export(w io.Writer, properties map[string]string, expiration time
 		err = filepath.Walk(fnam, writeToTar)
 		if err != nil {
 			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
+			return nil, err
 		}
 	}
 
 	err = tarWriter.Close()
 	if err != nil {
 		d.logger.Error("Failed exporting instance", ctxMap)
-		return meta, err
+		return nil, err
 	}
 
 	revert.Success()
 	d.logger.Info("Exported instance", ctxMap)
-	return meta, nil
+	return &meta, nil
 }
 
 // MigrateSend is not currently supported.
@@ -6744,6 +6700,7 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		VolumeOnly:         !args.Snapshots,
 		Info:               &localMigration.Info{Config: srcConfig},
 		ClusterMove:        args.ClusterMoveSourceName != "",
+		StorageMove:        args.StoragePool != "",
 	}
 
 	// Only send the snapshots that the target requests when refreshing.
@@ -6835,7 +6792,7 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 				defer instanceRefClear(d)
 			}
 
-			err = d.migrateSendLive(pool, args.ClusterMoveSourceName, blockSize, filesystemConn, stateConn, volSourceArgs)
+			err = d.migrateSendLive(pool, args.ClusterMoveSourceName, args.StoragePool, blockSize, filesystemConn, stateConn, volSourceArgs)
 			if err != nil {
 				return err
 			}
@@ -6874,8 +6831,8 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 }
 
 // migrateSendLive performs live migration send process.
-func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName string, rootDiskSize int64, filesystemConn io.ReadWriteCloser, stateConn io.ReadWriteCloser, volSourceArgs *localMigration.VolumeSourceArgs) error {
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName string, storagePool string, rootDiskSize int64, filesystemConn io.ReadWriteCloser, stateConn io.ReadWriteCloser, volSourceArgs *localMigration.VolumeSourceArgs) error {
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -6884,14 +6841,14 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 	nbdTargetDiskName := "incus_root_nbd"         // Name of NBD disk device added to local VM to sync to.
 	rootSnapshotDiskName := "incus_root_snapshot" // Name of snapshot disk device to use.
 
-	// If we are performing an intra-cluster member move on a Ceph storage pool then we can treat this as
-	// shared storage and avoid needing to sync the root disk.
-	sharedStorage := clusterMoveSourceName != "" && pool.Driver().Info().Remote
+	// If we are performing an intra-cluster member move on a Ceph storage pool without storage change
+	// then we can treat this as shared storage and avoid needing to sync the root disk.
+	sameSharedStorage := clusterMoveSourceName != "" && pool.Driver().Info().Remote && storagePool == ""
 
 	revert := revert.New()
 
 	// Non-shared storage snapshot setup.
-	if !sharedStorage {
+	if !sameSharedStorage {
 		// Setup migration capabilities.
 		capabilities := map[string]bool{
 			// Automatically throttle down the guest to speed up convergence of RAM migration.
@@ -7054,7 +7011,7 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 	}
 
 	// Non-shared storage snapshot transfer.
-	if !sharedStorage {
+	if !sameSharedStorage {
 		listener, err := net.Listen("unix", "")
 		if err != nil {
 			return fmt.Errorf("Failed creating NBD unix listener: %w", err)
@@ -7148,7 +7105,7 @@ func (d *qemu) migrateSendLive(pool storagePools.Pool, clusterMoveSourceName str
 	}
 
 	// Non-shared storage snapshot transfer finalization.
-	if !sharedStorage {
+	if !sameSharedStorage {
 		// Wait until state transfer has reached pre-switchover state (the guest OS will remain paused).
 		err = monitor.MigrateWait("pre-switchover")
 		if err != nil {
@@ -7246,19 +7203,26 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	// record because it may be associated to the wrong cluster member. Instead we ascertain the pool to load
 	// using the instance's root disk device.
 	if args.ClusterMoveSourceName == d.name {
-		_, rootDiskDevice, err := d.getRootDiskDevice()
-		if err != nil {
-			return fmt.Errorf("Failed getting root disk: %w", err)
-		}
+		if args.StoragePool != "" {
+			d.storagePool, err = storagePools.LoadByName(d.state, args.StoragePool)
+			if err != nil {
+				return fmt.Errorf("Failed loading storage pool: %w", err)
+			}
+		} else {
+			_, rootDiskDevice, err := d.getRootDiskDevice()
+			if err != nil {
+				return fmt.Errorf("Failed getting root disk: %w", err)
+			}
 
-		if rootDiskDevice["pool"] == "" {
-			return fmt.Errorf("The instance's root device is missing the pool property")
-		}
+			if rootDiskDevice["pool"] == "" {
+				return fmt.Errorf("The instance's root device is missing the pool property")
+			}
 
-		// Initialize the storage pool cache.
-		d.storagePool, err = storagePools.LoadByName(d.state, rootDiskDevice["pool"])
-		if err != nil {
-			return fmt.Errorf("Failed loading storage pool: %w", err)
+			// Initialize the storage pool cache.
+			d.storagePool, err = storagePools.LoadByName(d.state, rootDiskDevice["pool"])
+			if err != nil {
+				return fmt.Errorf("Failed loading storage pool: %w", err)
+			}
 		}
 	}
 
@@ -7323,7 +7287,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		}
 
 		// Compare the two sets.
-		syncSourceSnapshotIndexes, deleteTargetSnapshotIndexes := storagePools.CompareSnapshots(sourceSnapshotComparable, targetSnapshotsComparable)
+		syncSourceSnapshotIndexes, deleteTargetSnapshotIndexes := storagePools.CompareSnapshots(sourceSnapshotComparable, targetSnapshotsComparable, args.RefreshExcludeOlder)
 
 		// Delete the extra local snapshots first.
 		for _, deleteTargetSnapshotIndex := range deleteTargetSnapshotIndexes {
@@ -7475,6 +7439,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			VolumeSize:            offerHeader.GetVolumeSize(), // Block size setting override.
 			VolumeOnly:            !args.Snapshots,
 			ClusterMoveSourceName: args.ClusterMoveSourceName,
+			StoragePool:           args.StoragePool,
 		}
 
 		// At this point we have already figured out the parent instances's root
@@ -7554,6 +7519,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			// Setup the volume entry.
 			extraTargetArgs := localMigration.VolumeTargetArgs{
 				ClusterMoveSourceName: args.ClusterMoveSourceName,
+				StoragePool:           args.StoragePool,
 			}
 
 			vol := diskPool.GetVolume(storageDrivers.VolumeTypeCustom, storageDrivers.ContentTypeBlock, project.StorageVolume(storageProjectName, dev.Config["source"]), nil)
@@ -7597,8 +7563,8 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 				}
 
 				// Populate the filesystem connection handle if doing non-shared storage migration.
-				sharedStorage := args.ClusterMoveSourceName != "" && poolInfo.Remote
-				if !sharedStorage {
+				sameSharedStorage := args.ClusterMoveSourceName != "" && poolInfo.Remote && args.StoragePool == ""
+				if !sameSharedStorage {
 					d.migrationReceiveStateful[api.SecretNameFilesystem] = filesystemConn
 				}
 			}
@@ -7774,9 +7740,19 @@ func (d *qemu) Console(protocol string) (*os.File, chan error, error) {
 
 	// When activating the text-based console, swap the backend to be a socket for an interactive connection.
 	if protocol == instance.ConsoleTypeConsole {
-		err := d.SwapConsoleRBWithSocket()
+		// Look for existing connections and reset.
+		conn, err := net.Dial("unix", path)
+		if err == nil {
+			_ = d.consoleSwapSocketWithRB()
+			_ = conn.Close()
+
+			// Allow for cleanup to complete on the existing connection.
+			time.Sleep(time.Second)
+		}
+
+		err = d.consoleSwapRBWithSocket()
 		if err != nil {
-			_ = d.SwapConsoleSocketWithRB()
+			_ = d.consoleSwapSocketWithRB()
 			return nil, nil, fmt.Errorf("Failed to swap console ring buffer with socket: %w", err)
 		}
 	}
@@ -7788,7 +7764,7 @@ func (d *qemu) Console(protocol string) (*os.File, chan error, error) {
 	conn, err := net.Dial("unix", path)
 	if err != nil {
 		if protocol == instance.ConsoleTypeConsole {
-			_ = d.SwapConsoleSocketWithRB()
+			_ = d.consoleSwapSocketWithRB()
 		}
 
 		return nil, nil, fmt.Errorf("Connect to console socket %q: %w", path, err)
@@ -7797,13 +7773,19 @@ func (d *qemu) Console(protocol string) (*os.File, chan error, error) {
 	file, err := (conn.(*net.UnixConn)).File()
 	if err != nil {
 		if protocol == instance.ConsoleTypeConsole {
-			_ = d.SwapConsoleSocketWithRB()
+			_ = d.consoleSwapSocketWithRB()
 		}
 
 		return nil, nil, fmt.Errorf("Get socket file: %w", err)
 	}
 
 	_ = conn.Close()
+
+	// Handle disconnections.
+	go func() {
+		<-chDisconnect
+		_ = d.consoleSwapSocketWithRB()
+	}()
 
 	d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceConsole.Event(d, logger.Ctx{"type": protocol}))
 
@@ -7890,9 +7872,7 @@ func (d *qemu) Render(options ...func(response any) error) (any, any, error) {
 	}
 
 	if d.IsSnapshot() {
-		// Prepare the ETag
-		etag := []any{d.expiryDate}
-
+		// Prepare the response.
 		snapState := api.InstanceSnapshot{
 			CreatedAt:       d.creationDate,
 			ExpandedConfig:  d.expandedConfig,
@@ -7917,13 +7897,11 @@ func (d *qemu) Render(options ...func(response any) error) (any, any, error) {
 			}
 		}
 
-		return &snapState, etag, nil
+		return &snapState, d.ETag(), nil
 	}
 
-	// Prepare the ETag
-	etag := []any{d.architecture, d.localConfig, d.localDevices, d.ephemeral, d.profiles}
+	// Prepare the response.
 	statusCode := d.statusCode()
-
 	instState := api.Instance{
 		ExpandedConfig:  d.expandedConfig,
 		ExpandedDevices: d.expandedDevices.CloneNative(),
@@ -7952,7 +7930,7 @@ func (d *qemu) Render(options ...func(response any) error) (any, any, error) {
 		}
 	}
 
-	return &instState, etag, nil
+	return &instState, d.ETag(), nil
 }
 
 // RenderFull returns all info about the instance.
@@ -8226,7 +8204,7 @@ func (d *qemu) DeviceEventHandler(runConf *deviceConfig.RunConfig) error {
 		}
 
 		// Get the QMP monitor.
-		m, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+		m, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 		if err != nil {
 			return err
 		}
@@ -8399,7 +8377,7 @@ func (d *qemu) statusCode() api.StatusCode {
 	}
 
 	// Connect to the monitor.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		// If cannot connect to monitor, but qemu process in pid file still exists, then likely qemu
 		// is unresponsive and this instance is in an error state.
@@ -8455,6 +8433,11 @@ func (d *qemu) EarlyLogFilePath() string {
 // LogFilePath returns the instance's log path.
 func (d *qemu) LogFilePath() string {
 	return filepath.Join(d.LogPath(), "qemu.log")
+}
+
+// QMPLogFilePath returns the instance's QMP log path.
+func (d *qemu) QMPLogFilePath() string {
+	return filepath.Join(d.LogPath(), "qemu.qmp.log")
 }
 
 // FillNetworkDevice takes a nic or infiniband device type and enriches it with automatically
@@ -8848,7 +8831,7 @@ func (d *qemu) checkFeatures(hostArch int, qemuPath string) (map[string]any, err
 
 		// Try and connect to QMP socket until cancelled.
 		for {
-			monitor, err = qmp.Connect(monitorPath.Name(), qemuSerialChardevName, nil)
+			monitor, err = qmp.Connect(monitorPath.Name(), qemuSerialChardevName, nil, "")
 			// QMP successfully connected or we have been cancelled.
 			if err == nil || ctx.Err() != nil {
 				break
@@ -9086,7 +9069,7 @@ func (d *qemu) agentMetricsEnabled() bool {
 
 func (d *qemu) deviceAttachUSB(usbConf deviceConfig.USBDeviceItem) error {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -9106,7 +9089,7 @@ func (d *qemu) deviceAttachUSB(usbConf deviceConfig.USBDeviceItem) error {
 
 func (d *qemu) deviceDetachUSB(usbDev deviceConfig.USBDeviceItem) error {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -9152,7 +9135,7 @@ func (d *qemu) setCPUs(monitor *qmp.Monitor, count int) error {
 	if monitor == nil {
 		var err error
 
-		monitor, err = qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+		monitor, err = qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 		if err != nil {
 			return err
 		}
@@ -9359,10 +9342,13 @@ func (d *qemu) ConsoleLog() (string, error) {
 		return "", err
 	}
 
-	defer op.Done(nil)
+	// Only mark the operation as done if only processing the console retrieval.
+	if op.Action() == operationlock.ActionConsoleRetrieve {
+		defer op.Done(nil)
+	}
 
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return "", err
 	}
@@ -9408,8 +9394,8 @@ func (d *qemu) ConsoleLog() (string, error) {
 	return string(fullLog), nil
 }
 
-// SwapConsoleRBWithSocket swaps the qemu backend for the instance's console to a unix socket.
-func (d *qemu) SwapConsoleRBWithSocket() error {
+// consoleSwapRBWithSocket swaps the qemu backend for the instance's console to a unix socket.
+func (d *qemu) consoleSwapRBWithSocket() error {
 	// This will wipe out anything in the existing ring buffer; save any buffered data to log file first.
 	_, err := d.ConsoleLog()
 	if err != nil {
@@ -9417,7 +9403,7 @@ func (d *qemu) SwapConsoleRBWithSocket() error {
 	}
 
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -9438,10 +9424,10 @@ func (d *qemu) SwapConsoleRBWithSocket() error {
 	return monitor.ChardevChange("console", qmp.ChardevChangeInfo{Type: "socket", FDName: "consoleSocket", File: d.consoleSocketFile})
 }
 
-// SwapConsoleSocketWithRB swaps the qemu backend for the instance's console to a ring buffer.
-func (d *qemu) SwapConsoleSocketWithRB() error {
+// consoleSwapSocketWithRB swaps the qemu backend for the instance's console to a ring buffer.
+func (d *qemu) consoleSwapSocketWithRB() error {
 	// Check if the agent is running.
-	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler())
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
 	if err != nil {
 		return err
 	}
@@ -9454,4 +9440,30 @@ func (d *qemu) SwapConsoleSocketWithRB() error {
 	}()
 
 	return monitor.ChardevChange("console", qmp.ChardevChangeInfo{Type: "ringbuf"})
+}
+
+// ConsoleScreenshot returns a screenshot of the current VGA console in PNG format.
+func (d *qemu) ConsoleScreenshot(screenshotFile *os.File) error {
+	if !d.IsRunning() {
+		return fmt.Errorf("Instance is not running")
+	}
+
+	// Check if the agent is running.
+	monitor, err := qmp.Connect(d.monitorPath(), qemuSerialChardevName, d.getMonitorEventHandler(), d.QMPLogFilePath())
+	if err != nil {
+		return err
+	}
+
+	err = screenshotFile.Chown(int(d.state.OS.UnprivUID), -1)
+	if err != nil {
+		return fmt.Errorf("Failed to chown screenshot path: %w", err)
+	}
+
+	// Take the screenshot.
+	err = monitor.Screendump(screenshotFile.Name())
+	if err != nil {
+		return fmt.Errorf("Failed taking screenshot: %w", err)
+	}
+
+	return nil
 }

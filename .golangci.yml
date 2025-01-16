@@ -3,6 +3,7 @@ linters:
     - gci
     - godot
     - gofmt
+    - goimports
     - misspell
     - whitespace
     - revive
@@ -14,6 +15,8 @@ linters-settings:
       - standard
       - default
       - prefix(github.com/lxc/incus)
+  goimports:
+    local-prefixes: github.com/lxc/incus
   errcheck:
     exclude-functions:
       - (io.ReadCloser).Close

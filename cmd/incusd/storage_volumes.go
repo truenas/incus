@@ -23,7 +23,6 @@ import (
 	"github.com/lxc/incus/v6/internal/filter"
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
 	internalIO "github.com/lxc/incus/v6/internal/io"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/auth"
 	"github.com/lxc/incus/v6/internal/server/backup"
 	"github.com/lxc/incus/v6/internal/server/cluster"
@@ -43,6 +42,7 @@ import (
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/archive"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 	localtls "github.com/lxc/incus/v6/shared/tls"
 	"github.com/lxc/incus/v6/shared/util"
 )
@@ -829,7 +829,7 @@ func doCustomVolumeRefresh(s *state.State, r *http.Request, requestProjectName s
 			return fmt.Errorf("No source volume name supplied")
 		}
 
-		err = pool.RefreshCustomVolume(projectName, srcProjectName, req.Name, req.Description, req.Config, req.Source.Pool, req.Source.Name, !req.Source.VolumeOnly, op)
+		err = pool.RefreshCustomVolume(projectName, srcProjectName, req.Name, req.Description, req.Config, req.Source.Pool, req.Source.Name, !req.Source.VolumeOnly, req.Source.RefreshExcludeOlder, op)
 		if err != nil {
 			return err
 		}
@@ -940,10 +940,11 @@ func doVolumeMigration(s *state.State, r *http.Request, requestProjectName strin
 			NetDialContext:   localtls.RFC3493Dialer,
 			HandshakeTimeout: time.Second * 5,
 		},
-		Secrets:    req.Source.Websockets,
-		Push:       push,
-		VolumeOnly: req.Source.VolumeOnly,
-		Refresh:    req.Source.Refresh,
+		Secrets:             req.Source.Websockets,
+		Push:                push,
+		VolumeOnly:          req.Source.VolumeOnly,
+		Refresh:             req.Source.Refresh,
+		RefreshExcludeOlder: req.Source.RefreshExcludeOlder,
 	}
 
 	sink, err := newStorageMigrationSink(&migrationArgs)

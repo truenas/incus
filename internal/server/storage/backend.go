@@ -24,13 +24,12 @@ import (
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v2"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
 	"github.com/lxc/incus/v6/internal/instancewriter"
 	internalIO "github.com/lxc/incus/v6/internal/io"
 	"github.com/lxc/incus/v6/internal/linux"
 	"github.com/lxc/incus/v6/internal/migration"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/backup"
 	backupConfig "github.com/lxc/incus/v6/internal/server/backup/config"
 	"github.com/lxc/incus/v6/internal/server/cluster/request"
@@ -55,6 +54,7 @@ import (
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/ioprogress"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/units"
 	"github.com/lxc/incus/v6/shared/util"
 )
@@ -1227,7 +1227,7 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 // RefreshCustomVolume refreshes custom volumes (and optionally snapshots) during the custom volume copy operations.
 // Snapshots that are not present in the source but are in the destination are removed from the
 // destination if snapshots are included in the synchronization.
-func (b *backend) RefreshCustomVolume(projectName string, srcProjectName string, volName string, desc string, config map[string]string, srcPoolName, srcVolName string, snapshots bool, op *operations.Operation) error {
+func (b *backend) RefreshCustomVolume(projectName string, srcProjectName string, volName string, desc string, config map[string]string, srcPoolName, srcVolName string, snapshots bool, excludeOlder bool, op *operations.Operation) error {
 	l := b.logger.AddContext(logger.Ctx{"project": projectName, "srcProjectName": srcProjectName, "volName": volName, "desc": desc, "config": config, "srcPoolName": srcPoolName, "srcVolName": srcVolName, "snapshots": snapshots})
 	l.Debug("RefreshCustomVolume started")
 	defer l.Debug("RefreshCustomVolume finished")
@@ -1327,7 +1327,7 @@ func (b *backend) RefreshCustomVolume(projectName string, srcProjectName string,
 			})
 		}
 
-		syncSourceSnapshotIndexes, deleteTargetSnapshotIndexes := CompareSnapshots(sourceSnapshotComparable, targetSnapshotsComparable)
+		syncSourceSnapshotIndexes, deleteTargetSnapshotIndexes := CompareSnapshots(sourceSnapshotComparable, targetSnapshotsComparable, excludeOlder)
 
 		// Delete extra snapshots first.
 		for _, deleteTargetSnapIndex := range deleteTargetSnapshotIndexes {
@@ -4032,10 +4032,7 @@ func (b *backend) ImportBucket(projectName string, poolVol *backupConfig.Config,
 	defer revert.Fail()
 
 	// Copy bucket config from backup file if present (so BucketDBCreate can safely modify the copy if needed).
-	bucketConfig := make(map[string]string, len(poolVol.Bucket.Config))
-	for k, v := range poolVol.Bucket.Config {
-		bucketConfig[k] = v
-	}
+	bucketConfig := util.CloneMap(poolVol.Bucket.Config)
 
 	bucket := &api.StorageBucketsPost{
 		Name:             poolVol.Bucket.Name,
@@ -5810,10 +5807,7 @@ func (b *backend) ImportCustomVolume(projectName string, poolVol *backupConfig.C
 	defer revert.Fail()
 
 	// Copy volume config from backup file if present (so VolumeDBCreate can safely modify the copy if needed).
-	volumeConfig := make(map[string]string, len(poolVol.Volume.Config))
-	for k, v := range poolVol.Volume.Config {
-		volumeConfig[k] = v
-	}
+	volumeConfig := util.CloneMap(poolVol.Volume.Config)
 
 	// Validate config and create database entry for restored storage volume.
 	err := VolumeDBCreate(b, projectName, poolVol.Volume.Name, poolVol.Volume.Description, drivers.VolumeTypeCustom, false, volumeConfig, poolVol.Volume.CreatedAt, time.Time{}, drivers.ContentType(poolVol.Volume.ContentType), false, true)
@@ -5829,10 +5823,7 @@ func (b *backend) ImportCustomVolume(projectName string, poolVol *backupConfig.C
 
 		// Copy volume config from backup file if present
 		// (so VolumeDBCreate can safely modify the copy if needed).
-		snapVolumeConfig := make(map[string]string, len(poolVolSnap.Config))
-		for k, v := range poolVolSnap.Config {
-			snapVolumeConfig[k] = v
-		}
+		snapVolumeConfig := util.CloneMap(poolVolSnap.Config)
 
 		// Validate config and create database entry for restored storage volume.
 		err = VolumeDBCreate(b, projectName, fullSnapName, poolVolSnap.Description, drivers.VolumeTypeCustom, true, snapVolumeConfig, poolVolSnap.CreatedAt, time.Time{}, drivers.ContentType(poolVolSnap.ContentType), false, true)
@@ -6220,6 +6211,7 @@ func (b *backend) GenerateCustomVolumeBackupConfig(projectName string, volName s
 				Name:        snapName, // Snapshot only name, not full name.
 				Config:      dbVolSnaps[i].Config,
 				ContentType: dbVolSnaps[i].ContentType,
+				CreatedAt:   dbVolSnaps[i].CreationDate,
 			}
 
 			config.VolumeSnapshots = append(config.VolumeSnapshots, &snapshot)
@@ -6881,10 +6873,7 @@ func (b *backend) ImportInstance(inst instance.Instance, poolVol *backupConfig.C
 		// Copy volume config from backup file config if present,
 		// so VolumeDBCreate can safely modify the copy if needed.
 		if poolVol.Volume != nil {
-			volumeConfig = make(map[string]string, len(poolVol.Volume.Config))
-			for k, v := range poolVol.Volume.Config {
-				volumeConfig[k] = v
-			}
+			volumeConfig = util.CloneMap(poolVol.Volume.Config)
 
 			if !poolVol.Volume.CreatedAt.IsZero() {
 				creationDate = poolVol.Volume.CreatedAt
@@ -6906,10 +6895,7 @@ func (b *backend) ImportInstance(inst instance.Instance, poolVol *backupConfig.C
 
 				// Copy volume config from backup file if present,
 				// so VolumeDBCreate can safely modify the copy if needed.
-				snapVolumeConfig := make(map[string]string, len(poolVolSnap.Config))
-				for k, v := range poolVolSnap.Config {
-					snapVolumeConfig[k] = v
-				}
+				snapVolumeConfig := util.CloneMap(poolVolSnap.Config)
 
 				// Validate config and create database entry for recovered storage volume.
 				err = VolumeDBCreate(b, inst.Project().Name, fullSnapName, poolVolSnap.Description, volType, true, snapVolumeConfig, poolVolSnap.CreatedAt, time.Time{}, contentType, false, true)

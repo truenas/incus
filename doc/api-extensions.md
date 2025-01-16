@@ -2615,3 +2615,56 @@ This extension adds a pointer to an `InstanceStateOSInfo` struct to the instance
 
 This adds a new `/1.0/networks/NAME/load-balancers/IP/state` API endpoint
 which returns load-balancer health check information (when configured).
+
+## `instance_nic_macvlan_mode`
+
+This adds a `mode` configuration key on `macvlan` network interfaces which allows for configuring the Macvlan mode.
+
+## `storage_lvm_cluster_create`
+
+Allow for creating new LVM cluster pools by setting the `source` to the shared block device.
+
+## `network_ovn_external_interfaces`
+
+This adds support for `bridge.external_interfaces` on OVN networks.
+
+## `instances_scriptlet_get_instances_count`
+
+This allows the instance scriptlet to fetch the count instances given an optional Project or Location filter as well as including pending instances.
+
+## `cluster_rebalance`
+
+This adds automatic live-migration to balance load on cluster again.
+
+As part of this, the following configuration options have been added:
+
+* `cluster.rebalance.batch`
+* `cluster.rebalance.cooldown`
+* `cluster.rebalance.interval`
+* `cluster.rebalance.threshold`
+
+## `custom_volume_refresh_exclude_older_snapshots`
+
+This adds support for excluding source snapshots earlier than latest target snapshot.
+
+## `storage_initial_owner`
+
+This adds ability to set the initial owner of a custom volume.
+
+The following configuration options have been added:
+
+* `initial.gid`
+* `initial.mode`
+* `initial.uid`
+
+## `storage_live_migration`
+
+This adds support for virtual-machines live-migration between storage pools.
+
+## `instance_console_screenshot`
+
+This adds support to take screenshots of the current VGA console of a VM.
+
+## `image_import_alias`
+
+Adds a new `X-Incus-aliases` HTTP header to set aliases while uploading an image.

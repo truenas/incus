@@ -23,7 +23,6 @@ import (
 	"github.com/lxc/incus/v6/internal/instancewriter"
 	"github.com/lxc/incus/v6/internal/linux"
 	"github.com/lxc/incus/v6/internal/migration"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/backup"
 	localMigration "github.com/lxc/incus/v6/internal/server/migration"
 	"github.com/lxc/incus/v6/internal/server/operations"
@@ -32,6 +31,7 @@ import (
 	"github.com/lxc/incus/v6/shared/archive"
 	"github.com/lxc/incus/v6/shared/ioprogress"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/subprocess"
 	"github.com/lxc/incus/v6/shared/units"
 	"github.com/lxc/incus/v6/shared/util"
@@ -2043,7 +2043,7 @@ func (d *zfs) ListVolumes() ([]Volume, error) {
 		return nil, fmt.Errorf("Failed getting volume list: %v: %w", strings.TrimSpace(string(errMsg)), err)
 	}
 
-	volList := make([]Volume, len(vols))
+	volList := make([]Volume, 0, len(vols))
 	for _, v := range vols {
 		volList = append(volList, v)
 	}

@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/lxc/incus/v6/internal/linux"
-	"github.com/lxc/incus/v6/internal/revert"
 	deviceConfig "github.com/lxc/incus/v6/internal/server/device/config"
 	"github.com/lxc/incus/v6/internal/server/instance"
 	"github.com/lxc/incus/v6/internal/server/instance/instancetype"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/subprocess"
 	"github.com/lxc/incus/v6/shared/util"
 	"github.com/lxc/incus/v6/shared/validate"
@@ -202,10 +202,12 @@ func (d *tpm) startVM() (*deviceConfig.RunConfig, error) {
 		},
 	}
 
-	proc, err := subprocess.NewProcess("swtpm", []string{"socket", "--tpm2", "--tpmstate", fmt.Sprintf("dir=%s", tpmDevPath), "--ctrl", fmt.Sprintf("type=unixio,path=%s", socketPath)}, "", "")
+	proc, err := subprocess.NewProcess("swtpm", []string{"socket", "--tpm2", "--tpmstate", fmt.Sprintf("dir=%s", tpmDevPath), "--ctrl", fmt.Sprintf("type=unixio,path=swtpm-%s.sock", d.name)}, "", "")
 	if err != nil {
 		return nil, err
 	}
+
+	proc.Cwd = tpmDevPath
 
 	// Start the TPM emulator.
 	err = proc.Start(context.Background())

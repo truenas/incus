@@ -12,7 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/internal/server/auth"
 	"github.com/lxc/incus/v6/internal/server/cluster"
 	clusterRequest "github.com/lxc/incus/v6/internal/server/cluster/request"
@@ -27,6 +27,7 @@ import (
 	"github.com/lxc/incus/v6/internal/version"
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/util"
 )
 
 // Lock to prevent concurent storage pools creation.
@@ -554,10 +555,7 @@ func storagePoolsPostCluster(ctx context.Context, s *state.State, pool *api.Stor
 
 		// Clone fresh node config so we don't modify req.Config with this node's specific config which
 		// could result in it being sent to other nodes later.
-		nodeReq.Config = make(map[string]string, len(req.Config))
-		for k, v := range req.Config {
-			nodeReq.Config[k] = v
-		}
+		nodeReq.Config = util.CloneMap(req.Config)
 
 		// Merge node specific config items into global config.
 		for key, value := range configs[server.Environment.ServerName] {

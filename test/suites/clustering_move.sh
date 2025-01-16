@@ -111,7 +111,8 @@ def instance_placement(request, candidate_members):
                 return "Expecting reason relocation"
 
         # Set statically target to 1st member.
-        set_target(candidate_members[0].server_name)
+        candidate_names = sorted([candidate.server_name for candidate in candidate_members])
+        set_target(candidate_names[0])
 
         return
 EOF
@@ -121,8 +122,7 @@ EOF
   INCUS_DIR="${INCUS_ONE_DIR}" incus move c2 --target @foobar3
   INCUS_DIR="${INCUS_ONE_DIR}" incus info c2 | grep -q "Location: node3"
 
-  # Ensure that setting an invalid target won't interrupt the move and fall back to the built in behavior.
-  # Equally distribute the instances beforehand so that node1 will get selected.
+  # Ensure that setting an invalid target causes the error to be raised.
   INCUS_DIR="${INCUS_ONE_DIR}" incus move c2 --target node2
 
   cat << EOF | INCUS_DIR="${INCUS_ONE_DIR}" incus config set instances.placement.scriptlet=-
@@ -134,8 +134,7 @@ def instance_placement(request, candidate_members):
         return
 EOF
 
-  INCUS_DIR="${INCUS_ONE_DIR}" incus move c1 --target @foobar1
-  INCUS_DIR="${INCUS_ONE_DIR}" incus info c1 | grep -q "Location: node1"
+  ! INCUS_DIR="${INCUS_ONE_DIR}" incus move c1 --target @foobar1 || false
 
   # If the scriptlet produces a runtime error, the move fails.
   cat << EOF | INCUS_DIR="${INCUS_ONE_DIR}" incus config set instances.placement.scriptlet=-

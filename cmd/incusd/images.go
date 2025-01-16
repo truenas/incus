@@ -29,7 +29,7 @@ import (
 	"github.com/kballard/go-shellquote"
 	"gopkg.in/yaml.v2"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/internal/filter"
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
 	internalIO "github.com/lxc/incus/v6/internal/io"
@@ -346,15 +346,10 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 	}
 
 	// Export instance to writer.
-	var meta api.ImageMetadata
+	var meta *api.ImageMetadata
 
 	writer = internalIO.NewQuotaWriter(writer, budget)
 	meta, err = c.Export(writer, req.Properties, req.ExpiresAt, tracker)
-
-	// Get ExpiresAt
-	if meta.ExpiryDate != 0 {
-		info.ExpiresAt = time.Unix(meta.ExpiryDate, 0)
-	}
 
 	// Clean up file handles.
 	// When compression is used, Close on imageProgressWriter/tarWriter is required for compressFile/gzip to
@@ -371,6 +366,11 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 	// Check instance export errors.
 	if err != nil {
 		return nil, err
+	}
+
+	// Get ExpiresAt
+	if meta.ExpiryDate != 0 {
+		info.ExpiresAt = time.Unix(meta.ExpiryDate, 0)
 	}
 
 	fi, err := os.Stat(imageFile.Name())
@@ -596,6 +596,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 	info.Public = util.IsTrue(r.Header.Get("X-Incus-public"))
 	propHeaders := r.Header[http.CanonicalHeaderKey("X-Incus-properties")]
 	profilesHeaders := r.Header.Get("X-Incus-profiles")
+	aliasesHeaders := r.Header.Get("X-Incus-aliases")
 	ctype, ctypeParams, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
 		ctype = "application/octet-stream"
@@ -781,6 +782,19 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 		}
 	}
 
+	if len(aliasesHeaders) > 0 {
+		info.Aliases = []api.ImageAlias{}
+		aliasNames, _ := url.ParseQuery(aliasesHeaders)
+
+		for _, aliasName := range aliasNames["alias"] {
+			alias := api.ImageAlias{
+				Name: aliasName,
+			}
+
+			info.Aliases = append(info.Aliases, alias)
+		}
+	}
+
 	var profileIds []int64
 	if len(profilesHeaders) > 0 {
 		p, _ := url.ParseQuery(profilesHeaders)
@@ -806,7 +820,6 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 	}
 
 	var exists bool
-
 	err = s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
 		// Check if the image already exists
 		exists, err = tx.ImageExists(ctx, project, info.Fingerprint)
@@ -945,6 +958,13 @@ func imageCreateInPool(s *state.State, info *api.Image, storagePool string) erro
 //	    schema:
 //	      type: string
 //	  - in: header
+//	    name: X-Incus-aliases
+//	    description: List of aliases to assign
+//	    schema:
+//	      type: array
+//	      items:
+//	        type: string
+//	  - in: header
 //	    name: X-Incus-properties
 //	    description: Descriptive properties
 //	    schema:
@@ -996,7 +1016,6 @@ func imagesPost(d *Daemon, r *http.Request) response.Response {
 	fingerprint := r.Header.Get("X-Incus-fingerprint")
 
 	var imageMetadata map[string]any
-
 	if !trusted && (secret == "" || fingerprint == "") {
 		return response.Forbidden(nil)
 	} else {
@@ -1172,9 +1191,18 @@ func imagesPost(d *Daemon, r *http.Request) response.Response {
 		}
 
 		// Apply any provided alias
-		aliases, ok := imageMetadata["aliases"]
-		if ok {
-			req.Aliases = aliases.([]api.ImageAlias)
+		if len(req.Aliases) == 0 {
+			aliases, ok := imageMetadata["aliases"]
+			if ok {
+				// Used to get aliases from push mode image copy operation.
+				aliases, ok := aliases.([]api.ImageAlias)
+				if ok {
+					req.Aliases = aliases
+				}
+			} else if len(info.Aliases) > 0 {
+				// Used to get aliases from HTTP headers on raw image imports.
+				req.Aliases = info.Aliases
+			}
 		}
 
 		err = s.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
@@ -1199,7 +1227,7 @@ func imagesPost(d *Daemon, r *http.Request) response.Response {
 				}
 
 				// Add the image alias to the authorizer.
-				err = s.Authorizer.AddImageAlias(r.Context(), projectName, alias.Name)
+				err = s.Authorizer.AddImageAlias(ctx, projectName, alias.Name)
 				if err != nil {
 					logger.Error("Failed to add image alias to authorizer", logger.Ctx{"name": alias.Name, "project": projectName, "error": err})
 				}

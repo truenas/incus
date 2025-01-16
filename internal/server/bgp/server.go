@@ -14,8 +14,8 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/lxc/incus/v6/internal/ports"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 )
 
 // Server represents a BGP server instance.
@@ -243,6 +243,15 @@ func (s *Server) AddPrefix(subnet net.IPNet, nexthop net.IP, owner string) error
 }
 
 func (s *Server) addPrefix(subnet net.IPNet, nexthop net.IP, owner string) error {
+	// Check for an existing entry.
+	for _, path := range s.paths {
+		if path.owner != owner || path.prefix.String() != subnet.String() || path.nexthop.String() != nexthop.String() {
+			continue
+		}
+
+		return nil
+	}
+
 	// Prepare the prefix.
 	prefixLen, _ := subnet.Mask.Size()
 	prefix := subnet.IP.String()

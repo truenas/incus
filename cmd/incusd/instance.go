@@ -15,7 +15,6 @@ import (
 	ociSpecs "github.com/opencontainers/runtime-spec/specs-go"
 
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/cluster"
 	"github.com/lxc/incus/v6/internal/server/db"
 	dbCluster "github.com/lxc/incus/v6/internal/server/db/cluster"
@@ -31,6 +30,7 @@ import (
 	"github.com/lxc/incus/v6/internal/server/task"
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/util"
 )
 
@@ -183,6 +183,15 @@ func instanceCreateFromImage(ctx context.Context, s *state.State, r *http.Reques
 		return fmt.Errorf("Failed loading instance storage pool: %w", err)
 	}
 
+	// Lock this operation to ensure that concurrent image operations don't conflict.
+	// Other operations will wait for this one to finish.
+	unlock, err := imageOperationLock(ctx, img.Fingerprint)
+	if err != nil {
+		return err
+	}
+
+	defer unlock()
+
 	err = pool.CreateInstanceFromImage(inst, img.Fingerprint, op)
 	if err != nil {
 		return fmt.Errorf("Failed creating instance from image: %w", err)
@@ -290,6 +299,7 @@ type instanceCreateAsCopyOpts struct {
 	targetInstance       db.InstanceArgs   // Configuration for new instance.
 	instanceOnly         bool              // Only copy the instance and not it's snapshots.
 	refresh              bool              // Refresh an existing target instance.
+	refreshExcludeOlder  bool              // During refresh, exclude source snapshots earlier than latest target snapshot
 	applyTemplateTrigger bool              // Apply deferred TemplateTriggerCopy.
 	allowInconsistent    bool              // Ignore some copy errors
 }
@@ -372,7 +382,7 @@ func instanceCreateAsCopy(s *state.State, opts instanceCreateAsCopyOpts, op *ope
 				})
 			}
 
-			syncSourceSnapshotIndexes, deleteTargetSnapshotIndexes := storagePools.CompareSnapshots(sourceSnapshotComparable, targetSnapshotsComparable)
+			syncSourceSnapshotIndexes, deleteTargetSnapshotIndexes := storagePools.CompareSnapshots(sourceSnapshotComparable, targetSnapshotsComparable, opts.refreshExcludeOlder)
 
 			// Delete extra snapshots first.
 			for _, deleteTargetSnapIndex := range deleteTargetSnapshotIndexes {

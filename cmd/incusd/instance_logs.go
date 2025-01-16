@@ -6,12 +6,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/gorilla/mux"
 
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/auth"
 	"github.com/lxc/incus/v6/internal/server/instance"
 	"github.com/lxc/incus/v6/internal/server/lifecycle"
@@ -21,6 +21,7 @@ import (
 	"github.com/lxc/incus/v6/internal/server/storage"
 	internalUtil "github.com/lxc/incus/v6/internal/util"
 	"github.com/lxc/incus/v6/internal/version"
+	"github.com/lxc/incus/v6/shared/revert"
 )
 
 var instanceLogCmd = APIEndpoint{
@@ -668,8 +669,7 @@ func validLogFileName(fname string) bool {
 	/* Let's just require that the paths be relative, so that we don't have
 	 * to deal with any escaping or whatever.
 	 */
-	return fname == "lxc.log" ||
-		fname == "qemu.log" ||
+	return slices.Contains([]string{"lxc.log", "qemu.log", "qemu.early.log", "qemu.qmp.log"}, fname) ||
 		strings.HasPrefix(fname, "migration_") ||
 		strings.HasPrefix(fname, "snapshot_")
 }

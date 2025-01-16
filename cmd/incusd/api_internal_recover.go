@@ -10,7 +10,6 @@ import (
 
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
 	internalRecover "github.com/lxc/incus/v6/internal/recover"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/auth"
 	"github.com/lxc/incus/v6/internal/server/backup"
 	backupConfig "github.com/lxc/incus/v6/internal/server/backup/config"
@@ -27,6 +26,7 @@ import (
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/logger"
 	"github.com/lxc/incus/v6/shared/osarch"
+	"github.com/lxc/incus/v6/shared/revert"
 )
 
 // Define API endpoints for recover actions.
@@ -80,6 +80,11 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 			return err
 		}
 
+		profileConfigs, err := dbCluster.GetConfig(ctx, tx.Tx(), "profile")
+		if err != nil {
+			return err
+		}
+
 		profileDevices, err := dbCluster.GetDevices(ctx, tx.Tx(), "profile")
 		if err != nil {
 			return err
@@ -92,7 +97,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 				projectProfiles[profile.Project] = []*api.Profile{}
 			}
 
-			apiProfile, err := profile.ToAPI(ctx, tx.Tx(), profileDevices)
+			apiProfile, err := profile.ToAPI(ctx, tx.Tx(), profileConfigs, profileDevices)
 			if err != nil {
 				return err
 			}

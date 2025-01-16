@@ -16,15 +16,15 @@ import (
 	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v2"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	cli "github.com/lxc/incus/v6/internal/cmd"
 	"github.com/lxc/incus/v6/internal/ports"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/cluster"
 	"github.com/lxc/incus/v6/internal/server/db"
 	"github.com/lxc/incus/v6/internal/server/node"
 	"github.com/lxc/incus/v6/internal/server/sys"
 	internalUtil "github.com/lxc/incus/v6/internal/util"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/termios"
 )
 

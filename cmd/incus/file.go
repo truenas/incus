@@ -18,10 +18,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	cli "github.com/lxc/incus/v6/internal/cmd"
 	"github.com/lxc/incus/v6/internal/i18n"
 	internalIO "github.com/lxc/incus/v6/internal/io"
@@ -287,7 +288,14 @@ func (c *cmdFileCreate) Run(cmd *cobra.Command, args []string) error {
 		}, fileArgs.Content)
 	}
 
-	err = resource.server.CreateInstanceFile(resource.name, targetPath, fileArgs)
+	var paths []string
+	if c.flagType != "symlink" {
+		paths = []string{targetPath}
+	} else {
+		paths = []string{targetPath, symlinkTargetPath}
+	}
+
+	err = c.file.sftpCreateFile(resource, paths, fileArgs)
 	if err != nil {
 		progress.Done("")
 		return err
@@ -302,6 +310,8 @@ func (c *cmdFileCreate) Run(cmd *cobra.Command, args []string) error {
 type cmdFileDelete struct {
 	global *cmdGlobal
 	file   *cmdFile
+
+	flagForce bool
 }
 
 func (c *cmdFileDelete) Command() *cobra.Command {
@@ -311,6 +321,8 @@ func (c *cmdFileDelete) Command() *cobra.Command {
 	cmd.Short = i18n.G("Delete files in instances")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Delete files in instances`))
+
+	cmd.Flags().BoolVarP(&c.flagForce, "force", "f", false, i18n.G("Force deleting files, directories, and subdirectories")+"``")
 
 	cmd.RunE = c.Run
 
@@ -330,14 +342,41 @@ func (c *cmdFileDelete) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Store clients.
+	sftpClients := map[string]*sftp.Client{}
+
+	defer func() {
+		for _, sftpClient := range sftpClients {
+			_ = sftpClient.Close()
+		}
+	}()
+
 	for _, resource := range resources {
 		pathSpec := strings.SplitN(resource.name, "/", 2)
 		if len(pathSpec) != 2 {
 			return fmt.Errorf(i18n.G("Invalid path %s"), resource.name)
 		}
 
-		// Delete the file
-		err = resource.server.DeleteInstanceFile(pathSpec[0], pathSpec[1])
+		sftpConn, ok := sftpClients[pathSpec[0]]
+		if !ok {
+			sftpConn, err = resource.server.GetInstanceFileSFTP(pathSpec[0])
+			if err != nil {
+				return err
+			}
+
+			sftpClients[pathSpec[0]] = sftpConn
+		}
+
+		if c.flagForce {
+			err = sftpConn.RemoveAll(pathSpec[1])
+			if err != nil {
+				return err
+			}
+
+			return nil
+		}
+
+		err = sftpConn.Remove(pathSpec[1])
 		if err != nil {
 			return err
 		}
@@ -891,6 +930,61 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 		}
 
 		progress.Done("")
+	}
+
+	return nil
+}
+
+func (c *cmdFile) setOwnerMode(sftpConn *sftp.Client, targetPath string, args incus.InstanceFileArgs) error {
+	err := sftpConn.Chown(targetPath, int(args.UID), int(args.GID))
+	if err != nil {
+		return err
+	}
+
+	err = sftpConn.Chmod(targetPath, fs.FileMode(args.Mode))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *cmdFile) sftpCreateFile(resource remoteResource, targetPath []string, args incus.InstanceFileArgs) error {
+	sftpConn, err := resource.server.GetInstanceFileSFTP(resource.name)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = sftpConn.Close() }()
+
+	switch args.Type {
+	case "file":
+		_, err := sftpConn.OpenFile(targetPath[0], os.O_CREATE)
+		if err != nil {
+			return err
+		}
+
+		err = c.setOwnerMode(sftpConn, targetPath[0], args)
+		if err != nil {
+			return err
+		}
+
+	case "directory":
+		err := sftpConn.MkdirAll(targetPath[0])
+		if err != nil {
+			return err
+		}
+
+		err = c.setOwnerMode(sftpConn, targetPath[0], args)
+		if err != nil {
+			return err
+		}
+
+	case "symlink":
+		err = sftpConn.Symlink(targetPath[1], targetPath[0])
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

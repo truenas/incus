@@ -16,8 +16,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/lxc/incus/v6/client"
-	"github.com/lxc/incus/v6/internal/revert"
+	incus "github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/internal/server/auth"
 	"github.com/lxc/incus/v6/internal/server/cluster"
 	clusterRequest "github.com/lxc/incus/v6/internal/server/cluster/request"
@@ -38,6 +37,7 @@ import (
 	"github.com/lxc/incus/v6/internal/version"
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/util"
 )
 
@@ -716,10 +716,7 @@ func networksPostCluster(ctx context.Context, s *state.State, projectName string
 
 		// Clone the network config for this node so we don't modify it and potentially end up sending
 		// this node's config to another node.
-		nodeConfig := make(map[string]string, len(netConfig))
-		for k, v := range netConfig {
-			nodeConfig[k] = v
-		}
+		nodeConfig := util.CloneMap(netConfig)
 
 		// Merge node specific config items into global config.
 		for key, value := range nodeConfigs[server.Environment.ServerName] {
@@ -1059,7 +1056,7 @@ func networkDelete(d *Daemon, r *http.Request) response.Response {
 	clusterNotification := isClusterNotification(r)
 	if !clusterNotification {
 		// Quick checks.
-		inUse, err := n.IsUsed()
+		inUse, err := n.IsUsed(false)
 		if err != nil {
 			return response.SmartError(err)
 		}
@@ -1208,7 +1205,7 @@ func networkPost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Check network isn't in use.
-	inUse, err := n.IsUsed()
+	inUse, err := n.IsUsed(false)
 	if err != nil {
 		return response.InternalError(fmt.Errorf("Failed checking network in use: %w", err))
 	}

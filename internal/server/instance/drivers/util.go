@@ -2,18 +2,23 @@ package drivers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 
+	yaml "gopkg.in/yaml.v2"
+
+	"github.com/lxc/incus/v6/internal/linux"
 	"github.com/lxc/incus/v6/internal/server/db"
 	"github.com/lxc/incus/v6/internal/server/instance/instancetype"
 	"github.com/lxc/incus/v6/internal/server/state"
 	internalUtil "github.com/lxc/incus/v6/internal/util"
 	"github.com/lxc/incus/v6/shared/api"
+	"github.com/lxc/incus/v6/shared/units"
 )
 
 // GetClusterCPUFlags returns the list of shared CPU flags across.
@@ -52,7 +57,7 @@ func GetClusterCPUFlags(ctx context.Context, s *state.State, servers []string, a
 		}
 
 		res := api.Resources{}
-		err = json.Unmarshal(data, &res)
+		err = yaml.Unmarshal(data, &res)
 		if err != nil {
 			return nil, err
 		}
@@ -98,4 +103,27 @@ func GetClusterCPUFlags(ctx context.Context, s *state.State, servers []string, a
 	}
 
 	return flags, nil
+}
+
+// ParseMemoryStr parses a human representation of memory value as int64 type.
+func ParseMemoryStr(memory string) (valueInt int64, err error) {
+	if strings.HasSuffix(memory, "%") {
+		var percent, memoryTotal int64
+
+		percent, err = strconv.ParseInt(strings.TrimSuffix(memory, "%"), 10, 64)
+		if err != nil {
+			return 0, err
+		}
+
+		memoryTotal, err = linux.DeviceTotalMemory()
+		if err != nil {
+			return 0, err
+		}
+
+		valueInt = (memoryTotal / 100) * percent
+	} else {
+		valueInt, err = units.ParseByteSizeString(memory)
+	}
+
+	return valueInt, err
 }

@@ -45,7 +45,6 @@ import (
 	"github.com/lxc/incus/v6/internal/linux"
 	"github.com/lxc/incus/v6/internal/migration"
 	"github.com/lxc/incus/v6/internal/netutils"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/rsync"
 	"github.com/lxc/incus/v6/internal/server/apparmor"
 	"github.com/lxc/incus/v6/internal/server/cgroup"
@@ -79,6 +78,7 @@ import (
 	"github.com/lxc/incus/v6/shared/ioprogress"
 	"github.com/lxc/incus/v6/shared/logger"
 	"github.com/lxc/incus/v6/shared/osarch"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/subprocess"
 	"github.com/lxc/incus/v6/shared/termios"
 	"github.com/lxc/incus/v6/shared/units"
@@ -269,15 +269,7 @@ func lxcCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operatio
 	var idmapSet *idmap.Set
 	base := int64(0)
 	if !d.IsPrivileged() {
-		idmapSet, base, err = findIdmap(
-			s,
-			args.Name,
-			d.expandedConfig["security.idmap.isolated"],
-			d.expandedConfig["security.idmap.base"],
-			d.expandedConfig["security.idmap.size"],
-			d.expandedConfig["raw.idmap"],
-		)
-
+		idmapSet, base, err = d.findIdmap()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -446,63 +438,34 @@ type lxc struct {
 	idmapset *idmap.Set
 }
 
-func idmapSize(state *state.State, isolatedStr string, size string) (int64, error) {
-	isolated := false
-	if util.IsTrue(isolatedStr) {
-		isolated = true
-	}
-
-	var idMapSize int64
-	if size == "" || size == "auto" {
-		if isolated {
-			idMapSize = 65536
-		} else {
-			if len(state.OS.IdmapSet.Entries) != 2 {
-				return 0, fmt.Errorf("Bad initial idmap: %v", state.OS.IdmapSet)
-			}
-
-			idMapSize = state.OS.IdmapSet.Entries[0].MapRange
-		}
-	} else {
-		size, err := strconv.ParseInt(size, 10, 64)
-		if err != nil {
-			return 0, err
-		}
-
-		idMapSize = size
-	}
-
-	return idMapSize, nil
-}
-
 var idmapLock sync.Mutex
 
-func findIdmap(s *state.State, cName string, isolatedStr string, configBase string, configSize string, rawIdmap string) (*idmap.Set, int64, error) {
-	isolated := false
-	if util.IsTrue(isolatedStr) {
-		isolated = true
-	}
+func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
+	idmapSize := func(size string) (int64, error) {
+		var idMapSize int64
+		if size == "" || size == "auto" {
+			if util.IsTrue(d.expandedConfig["security.idmap.isolated"]) {
+				idMapSize = 65536
+			} else {
+				if len(d.state.OS.IdmapSet.Entries) != 2 {
+					return 0, fmt.Errorf("Bad initial idmap: %v", d.state.OS.IdmapSet)
+				}
 
-	rawMaps, err := idmap.NewSetFromIncusIDMap(rawIdmap)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if !isolated {
-		newIdmapset := idmap.Set{Entries: make([]idmap.Entry, len(s.OS.IdmapSet.Entries))}
-		copy(newIdmapset.Entries, s.OS.IdmapSet.Entries)
-
-		for _, ent := range rawMaps.Entries {
-			err := newIdmapset.AddSafe(ent)
-			if err != nil && err == idmap.ErrHostIDIsSubID {
-				return nil, 0, err
+				idMapSize = d.state.OS.IdmapSet.Entries[0].MapRange
 			}
+		} else {
+			size, err := strconv.ParseInt(size, 10, 64)
+			if err != nil {
+				return 0, err
+			}
+
+			idMapSize = size
 		}
 
-		return &newIdmapset, 0, nil
+		return idMapSize, nil
 	}
 
-	size, err := idmapSize(s, isolatedStr, configSize)
+	rawMaps, err := idmap.NewSetFromIncusIDMap(d.expandedConfig["raw.idmap"])
 	if err != nil {
 		return nil, 0, err
 	}
@@ -523,8 +486,45 @@ func findIdmap(s *state.State, cName string, isolatedStr string, configBase stri
 		return set, nil
 	}
 
-	if configBase != "" {
-		offset, err := strconv.ParseInt(configBase, 10, 64)
+	if !util.IsTrue(d.expandedConfig["security.idmap.isolated"]) {
+		// Create a new set based from the global one.
+		newIdmapset := idmap.Set{Entries: make([]idmap.Entry, len(d.state.OS.IdmapSet.Entries))}
+		copy(newIdmapset.Entries, d.state.OS.IdmapSet.Entries)
+
+		// Restrict the range sizes if specified.
+		if d.expandedConfig["security.idmap.size"] != "" {
+			size, err := idmapSize(d.expandedConfig["security.idmap.size"])
+			if err != nil {
+				return nil, 0, err
+			}
+
+			for k, ent := range newIdmapset.Entries {
+				if ent.MapRange < size {
+					continue
+				}
+
+				newIdmapset.Entries[k].MapRange = size
+			}
+		}
+
+		// Apply the raw idmap entries.
+		for _, ent := range rawMaps.Entries {
+			err := newIdmapset.AddSafe(ent)
+			if err != nil && err == idmap.ErrHostIDIsSubID {
+				return nil, 0, err
+			}
+		}
+
+		return &newIdmapset, 0, nil
+	}
+
+	size, err := idmapSize(d.expandedConfig["security.idmap.size"])
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if d.expandedConfig["security.idmap.base"] != "" {
+		offset, err := strconv.ParseInt(d.expandedConfig["security.idmap.base"], 10, 64)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -540,12 +540,12 @@ func findIdmap(s *state.State, cName string, isolatedStr string, configBase stri
 	idmapLock.Lock()
 	defer idmapLock.Unlock()
 
-	cts, err := instance.LoadNodeAll(s, instancetype.Container)
+	cts, err := instance.LoadNodeAll(d.state, instancetype.Container)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	offset := s.OS.IdmapSet.Entries[0].HostID + 65536
+	offset := d.state.OS.IdmapSet.Entries[0].HostID + 65536
 
 	mapentries := idmap.ByHostID{}
 	for _, container := range cts {
@@ -553,10 +553,8 @@ func findIdmap(s *state.State, cName string, isolatedStr string, configBase stri
 			continue
 		}
 
-		name := container.Name()
-
 		/* Don't change our map Just Because. */
-		if name == cName {
+		if container.ID() == d.id {
 			continue
 		}
 
@@ -576,7 +574,7 @@ func findIdmap(s *state.State, cName string, isolatedStr string, configBase stri
 			}
 		}
 
-		cSize, err := idmapSize(s, container.ExpandedConfig()["security.idmap.isolated"], container.ExpandedConfig()["security.idmap.size"])
+		cSize, err := idmapSize(container.ExpandedConfig()["security.idmap.size"])
 		if err != nil {
 			return nil, 0, err
 		}
@@ -619,7 +617,7 @@ func findIdmap(s *state.State, cName string, isolatedStr string, configBase stri
 		offset = mapentries.Entries[i].HostID + mapentries.Entries[i].MapRange
 	}
 
-	if offset+size < s.OS.IdmapSet.Entries[0].HostID+s.OS.IdmapSet.Entries[0].MapRange {
+	if offset+size <= d.state.OS.IdmapSet.Entries[0].HostID+d.state.OS.IdmapSet.Entries[0].MapRange {
 		set, err := mkIdmap(offset, size)
 		if err != nil && err == idmap.ErrHostIDIsSubID {
 			return nil, 0, err
@@ -1133,24 +1131,9 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 
 		// Configure the memory limits
 		if memory != "" {
-			var valueInt int64
-			if strings.HasSuffix(memory, "%") {
-				percent, err := strconv.ParseInt(strings.TrimSuffix(memory, "%"), 10, 64)
-				if err != nil {
-					return nil, err
-				}
-
-				memoryTotal, err := linux.DeviceTotalMemory()
-				if err != nil {
-					return nil, err
-				}
-
-				valueInt = int64((memoryTotal / 100) * percent)
-			} else {
-				valueInt, err = units.ParseByteSizeString(memory)
-				if err != nil {
-					return nil, err
-				}
+			valueInt, err := ParseMemoryStr(memory)
+			if err != nil {
+				return nil, err
 			}
 
 			if memoryEnforce == "soft" {
@@ -1947,14 +1930,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		// Check if we need to change idmap.
 		if nextMap != nil && d.state.OS.IdmapSet != nil && !d.state.OS.IdmapSet.Includes(nextMap) {
 			// Update the idmap.
-			idmapSet, base, err := findIdmap(
-				d.state,
-				d.Name(),
-				d.expandedConfig["security.idmap.isolated"],
-				d.expandedConfig["security.idmap.base"],
-				d.expandedConfig["security.idmap.size"],
-				d.expandedConfig["raw.idmap"],
-			)
+			idmapSet, base, err := d.findIdmap()
 			if err != nil {
 				return "", nil, fmt.Errorf("Failed to get ID map: %w", err)
 			}
@@ -2386,6 +2362,16 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 			if err != nil {
 				return "", nil, err
 			}
+
+			lxcMounts = append(lxcMounts, mount.Destination)
+		}
+
+		// Mount /run as a tmpfs if it exists and isn't already mounted.
+		if !slices.Contains(lxcMounts, "/run") {
+			err := lxcSetConfigItem(cc, "lxc.mount.entry", "none run tmpfs none,mode=755,optional")
+			if err != nil {
+				return "", nil, err
+			}
 		}
 
 		// Configure network handling.
@@ -2510,7 +2496,7 @@ ff02::2 ip6-allrouters
 				continue
 			}
 
-			err = lxcSetConfigItem(cc, "lxc.hook.pre-mount", fmt.Sprintf("mount -o bind %s /var/lib/incus-lxcfs/", filepath.Join(d.DevicesPath(), "lxcfs")))
+			err = lxcSetConfigItem(cc, "lxc.hook.pre-mount", fmt.Sprintf("mount -o bind %s %s/", filepath.Join(d.DevicesPath(), "lxcfs"), entry))
 			if err != nil {
 				return "", nil, err
 			}
@@ -3242,6 +3228,17 @@ func (d *lxc) onStop(args map[string]string) error {
 		// Clean up devices.
 		d.cleanupDevices(false, "")
 
+		// Stop DHCP client if any.
+		if util.PathExists(filepath.Join(d.Path(), "network", "dhcp.pid")) {
+			dhcpPIDStr, err := os.ReadFile(filepath.Join(d.Path(), "network", "dhcp.pid"))
+			if err == nil {
+				dhcpPID, err := strconv.Atoi(strings.TrimSpace(string(dhcpPIDStr)))
+				if err == nil {
+					_ = unix.Kill(dhcpPID, unix.SIGTERM)
+				}
+			}
+		}
+
 		// Remove directory ownership (to avoid issue if uidmap is re-used)
 		err := os.Chown(d.Path(), 0, 0)
 		if err != nil {
@@ -3534,9 +3531,7 @@ func (d *lxc) Render(options ...func(response any) error) (any, any, error) {
 	}
 
 	if d.IsSnapshot() {
-		// Prepare the ETag
-		etag := []any{d.expiryDate}
-
+		// Prepare the response.
 		snapState := api.InstanceSnapshot{
 			CreatedAt:       d.creationDate,
 			ExpandedConfig:  d.expandedConfig,
@@ -3561,12 +3556,10 @@ func (d *lxc) Render(options ...func(response any) error) (any, any, error) {
 			}
 		}
 
-		return &snapState, etag, nil
+		return &snapState, d.ETag(), nil
 	}
 
-	// Prepare the ETag
-	etag := []any{d.architecture, d.localConfig, d.localDevices, d.ephemeral, d.profiles}
-
+	// Prepare the response.
 	statusCode := d.statusCode()
 	instState := api.Instance{
 		ExpandedConfig:  d.expandedConfig,
@@ -3596,7 +3589,7 @@ func (d *lxc) Render(options ...func(response any) error) (any, any, error) {
 		}
 	}
 
-	return &instState, etag, nil
+	return &instState, d.ETag(), nil
 }
 
 // RenderFull renders the full state of the instance.
@@ -4674,14 +4667,7 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 		base := int64(0)
 		if !d.IsPrivileged() {
 			// Update the idmap.
-			idmapSet, base, err = findIdmap(
-				d.state,
-				d.Name(),
-				d.expandedConfig["security.idmap.isolated"],
-				d.expandedConfig["security.idmap.base"],
-				d.expandedConfig["security.idmap.size"],
-				d.expandedConfig["raw.idmap"],
-			)
+			idmapSet, base, err = d.findIdmap()
 			if err != nil {
 				return fmt.Errorf("Failed to get ID map: %w", err)
 			}
@@ -4804,20 +4790,8 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 				// Parse memory
 				if memory == "" {
 					memoryInt = -1
-				} else if strings.HasSuffix(memory, "%") {
-					percent, err := strconv.ParseInt(strings.TrimSuffix(memory, "%"), 10, 64)
-					if err != nil {
-						return err
-					}
-
-					memoryTotal, err := linux.DeviceTotalMemory()
-					if err != nil {
-						return err
-					}
-
-					memoryInt = int64((memoryTotal / 100) * percent)
 				} else {
-					memoryInt, err = units.ParseByteSizeString(memory)
+					memoryInt, err = ParseMemoryStr(memory)
 					if err != nil {
 						return err
 					}
@@ -5168,16 +5142,14 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 }
 
 // Export backs up the instance.
-func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (api.ImageMetadata, error) {
+func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (*api.ImageMetadata, error) {
 	ctxMap := logger.Ctx{
 		"created":   d.creationDate,
 		"ephemeral": d.ephemeral,
 		"used":      d.lastUsedDate}
 
-	meta := api.ImageMetadata{}
-
 	if d.IsRunning() {
-		return meta, fmt.Errorf("Cannot export a running instance as an image")
+		return nil, fmt.Errorf("Cannot export a running instance as an image")
 	}
 
 	d.logger.Info("Exporting instance", ctxMap)
@@ -5186,7 +5158,7 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 	_, err := d.mount()
 	if err != nil {
 		d.logger.Error("Failed exporting instance", ctxMap)
-		return meta, err
+		return nil, err
 	}
 
 	defer func() { _ = d.unmount() }()
@@ -5195,7 +5167,7 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 	idmap, err := d.DiskIdmap()
 	if err != nil {
 		d.logger.Error("Failed exporting instance", ctxMap)
-		return meta, err
+		return nil, err
 	}
 
 	// Create the tarball.
@@ -5221,156 +5193,107 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 		return nil
 	}
 
-	// Look for metadata.yaml.
-	fnam := filepath.Join(cDir, "metadata.yaml")
-	if !util.PathExists(fnam) {
-		// Generate a new metadata.yaml.
-		tempDir, err := os.MkdirTemp("", "incus_metadata_")
+	// Get the instance's architecture.
+	var arch string
+	if d.IsSnapshot() {
+		parentName, _, _ := api.GetParentAndSnapshotName(d.name)
+		parent, err := instance.LoadByProjectAndName(d.state, d.project.Name, parentName)
 		if err != nil {
 			_ = tarWriter.Close()
 			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
+			return nil, err
 		}
 
-		defer func() { _ = os.RemoveAll(tempDir) }()
-
-		// Get the instance's architecture.
-		var arch string
-		if d.IsSnapshot() {
-			parentName, _, _ := api.GetParentAndSnapshotName(d.name)
-			parent, err := instance.LoadByProjectAndName(d.state, d.project.Name, parentName)
-			if err != nil {
-				_ = tarWriter.Close()
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
-
-			arch, _ = osarch.ArchitectureName(parent.Architecture())
-		} else {
-			arch, _ = osarch.ArchitectureName(d.architecture)
-		}
-
-		if arch == "" {
-			arch, err = osarch.ArchitectureName(d.state.OS.Architectures[0])
-			if err != nil {
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
-		}
-
-		// Fill in the metadata.
-		meta.Architecture = arch
-		meta.CreationDate = time.Now().UTC().Unix()
-		meta.Properties = properties
-		if !expiration.IsZero() {
-			meta.ExpiryDate = expiration.UTC().Unix()
-		}
-
-		data, err := yaml.Marshal(&meta)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
-
-		// Write the actual file.
-		fnam = filepath.Join(tempDir, "metadata.yaml")
-		err = os.WriteFile(fnam, data, 0644)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
-
-		fi, err := os.Lstat(fnam)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
-
-		tmpOffset := len(path.Dir(fnam)) + 1
-		err = tarWriter.WriteFile(fnam[tmpOffset:], fnam, fi, false)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Debug("Error writing to tarfile", logger.Ctx{"err": err})
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
+		arch, _ = osarch.ArchitectureName(parent.Architecture())
 	} else {
+		arch, _ = osarch.ArchitectureName(d.architecture)
+	}
+
+	if arch == "" {
+		arch, err = osarch.ArchitectureName(d.state.OS.Architectures[0])
+		if err != nil {
+			d.logger.Error("Failed exporting instance", ctxMap)
+			return nil, err
+		}
+	}
+
+	// Generate metadata.yaml.
+	meta := api.ImageMetadata{}
+	fnam := filepath.Join(cDir, "metadata.yaml")
+
+	if util.PathExists(fnam) {
 		// Parse the metadata.
 		content, err := os.ReadFile(fnam)
 		if err != nil {
 			_ = tarWriter.Close()
 			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
+			return nil, err
 		}
 
 		err = yaml.Unmarshal(content, &meta)
 		if err != nil {
 			_ = tarWriter.Close()
 			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
+			return nil, err
 		}
+	}
 
-		if !expiration.IsZero() {
-			meta.ExpiryDate = expiration.UTC().Unix()
-		}
+	// Fill in the metadata.
+	meta.Architecture = arch
+	meta.CreationDate = time.Now().UTC().Unix()
 
-		if properties != nil {
-			meta.Properties = properties
-		}
+	if meta.Properties == nil {
+		meta.Properties = map[string]string{}
+	}
 
-		if properties != nil || !expiration.IsZero() {
-			// Generate a new metadata.yaml.
-			tempDir, err := os.MkdirTemp("", "incus_metadata_")
-			if err != nil {
-				_ = tarWriter.Close()
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
+	for k, v := range properties {
+		meta.Properties[k] = v
+	}
 
-			defer func() { _ = os.RemoveAll(tempDir) }()
+	if !expiration.IsZero() {
+		meta.ExpiryDate = expiration.UTC().Unix()
+	}
 
-			data, err := yaml.Marshal(&meta)
-			if err != nil {
-				_ = tarWriter.Close()
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
+	// Write the new metadata.yaml.
+	tempDir, err := os.MkdirTemp("", "incus_metadata_")
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
+	}
 
-			// Write the actual file.
-			fnam = filepath.Join(tempDir, "metadata.yaml")
-			err = os.WriteFile(fnam, data, 0644)
-			if err != nil {
-				_ = tarWriter.Close()
-				d.logger.Error("Failed exporting instance", ctxMap)
-				return meta, err
-			}
-		}
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
-		// Include metadata.yaml in the tarball.
-		fi, err := os.Lstat(fnam)
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Debug("Error statting during export", logger.Ctx{"fileName": fnam})
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
+	data, err := yaml.Marshal(&meta)
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
+	}
 
-		if properties != nil || !expiration.IsZero() {
-			tmpOffset := len(path.Dir(fnam)) + 1
-			err = tarWriter.WriteFile(fnam[tmpOffset:], fnam, fi, false)
-		} else {
-			err = tarWriter.WriteFile(fnam[offset:], fnam, fi, false)
-		}
+	fnam = filepath.Join(tempDir, "metadata.yaml")
+	err = os.WriteFile(fnam, data, 0644)
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
+	}
 
-		if err != nil {
-			_ = tarWriter.Close()
-			d.logger.Debug("Error writing to tarfile", logger.Ctx{"err": err})
-			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
-		}
+	// Add metadata.yaml to the tarball.
+	fi, err := os.Lstat(fnam)
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
+	}
+
+	tmpOffset := len(filepath.Dir(fnam)) + 1
+	err = tarWriter.WriteFile(fnam[tmpOffset:], fnam, fi, false)
+	if err != nil {
+		_ = tarWriter.Close()
+		d.logger.Debug("Error writing to tarfile", logger.Ctx{"err": err})
+		d.logger.Error("Failed exporting instance", ctxMap)
+		return nil, err
 	}
 
 	// Include all the rootfs files.
@@ -5378,7 +5301,7 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 	err = filepath.Walk(fnam, writeToTar)
 	if err != nil {
 		d.logger.Error("Failed exporting instance", ctxMap)
-		return meta, err
+		return nil, err
 	}
 
 	// Include all the templates.
@@ -5387,18 +5310,18 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 		err = filepath.Walk(fnam, writeToTar)
 		if err != nil {
 			d.logger.Error("Failed exporting instance", ctxMap)
-			return meta, err
+			return nil, err
 		}
 	}
 
 	err = tarWriter.Close()
 	if err != nil {
 		d.logger.Error("Failed exporting instance", ctxMap)
-		return meta, err
+		return nil, err
 	}
 
 	d.logger.Info("Exported instance", ctxMap)
-	return meta, nil
+	return &meta, nil
 }
 
 func collectCRIULogFile(d instance.Instance, imagesDir string, function string, method string) error {
@@ -6239,7 +6162,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		}
 
 		// Compare the two sets.
-		syncSourceSnapshotIndexes, deleteTargetSnapshotIndexes := storagePools.CompareSnapshots(sourceSnapshotComparable, targetSnapshotsComparable)
+		syncSourceSnapshotIndexes, deleteTargetSnapshotIndexes := storagePools.CompareSnapshots(sourceSnapshotComparable, targetSnapshotsComparable, args.RefreshExcludeOlder)
 
 		// Delete the extra local snapshots first.
 		for _, deleteTargetSnapshotIndex := range deleteTargetSnapshotIndexes {

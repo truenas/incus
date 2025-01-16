@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/mux"
 
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/db"
 	"github.com/lxc/incus/v6/internal/server/db/cluster"
 	"github.com/lxc/incus/v6/internal/server/db/operationtype"
@@ -26,6 +25,7 @@ import (
 	"github.com/lxc/incus/v6/internal/version"
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/osarch"
+	"github.com/lxc/incus/v6/shared/revert"
 )
 
 // swagger:operation PUT /1.0/instances/{name} instances instance_put
@@ -110,8 +110,7 @@ func instancePut(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Validate the ETag
-	etag := []any{inst.Architecture(), inst.LocalConfig(), inst.LocalDevices(), inst.IsEphemeral(), inst.Profiles()}
-	err = localUtil.EtagCheck(r, etag)
+	err = localUtil.EtagCheck(r, inst.ETag())
 	if err != nil {
 		return response.PreconditionFailed(err)
 	}
@@ -138,13 +137,18 @@ func instancePut(d *Daemon, r *http.Request) response.Response {
 				return err
 			}
 
+			profileConfigs, err := cluster.GetConfig(ctx, tx.Tx(), "profile")
+			if err != nil {
+				return err
+			}
+
 			profileDevices, err := cluster.GetDevices(ctx, tx.Tx(), "profile")
 			if err != nil {
 				return err
 			}
 
 			for _, profile := range profiles {
-				apiProfile, err := profile.ToAPI(ctx, tx.Tx(), profileDevices)
+				apiProfile, err := profile.ToAPI(ctx, tx.Tx(), profileConfigs, profileDevices)
 				if err != nil {
 					return err
 				}

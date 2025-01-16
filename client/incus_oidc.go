@@ -18,6 +18,8 @@ import (
 	httphelper "github.com/zitadel/oidc/v3/pkg/http"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"golang.org/x/oauth2"
+
+	"github.com/lxc/incus/v6/shared/util"
 )
 
 // ErrOIDCExpired is returned when the token is expired and we can't retry the request ourselves.
@@ -32,6 +34,17 @@ func (r *ProtocolIncus) setupOIDCClient(token *oidc.Tokens[*oidc.IDTokenClaims])
 
 	r.oidcClient = newOIDCClient(token)
 	r.oidcClient.httpClient = r.http
+}
+
+// GetOIDCTokens returns the current OIDC tokens (if any) from the OIDC client.
+//
+// This should only be used by internal Incus tools when it's not possible to get the tokens from a Config struct.
+func (r *ProtocolIncus) GetOIDCTokens() *oidc.Tokens[*oidc.IDTokenClaims] {
+	if r.oidcClient == nil {
+		return nil
+	}
+
+	return r.oidcClient.tokens
 }
 
 // Custom transport that modifies requests to inject the audience field.
@@ -281,7 +294,7 @@ func (o *oidcClient) authenticate(issuer string, clientID string, audience strin
 	fmt.Printf("URL: %s\n", u.String())
 	fmt.Printf("Code: %s\n\n", resp.UserCode)
 
-	_ = openBrowser(u.String())
+	_ = util.OpenBrowser(u.String())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT)
 	defer stop()

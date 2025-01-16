@@ -19,7 +19,6 @@ import (
 	"github.com/lxc/incus/v6/internal/instancewriter"
 	"github.com/lxc/incus/v6/internal/linux"
 	"github.com/lxc/incus/v6/internal/migration"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/backup"
 	localMigration "github.com/lxc/incus/v6/internal/server/migration"
 	"github.com/lxc/incus/v6/internal/server/operations"
@@ -27,6 +26,7 @@ import (
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/ioprogress"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/subprocess"
 	"github.com/lxc/incus/v6/shared/units"
 	"github.com/lxc/incus/v6/shared/util"
@@ -524,7 +524,7 @@ func (d *ceph) CreateVolumeFromCopy(vol Volume, srcVol Volume, copySnapshots boo
 
 // CreateVolumeFromMigration creates a volume being sent via a migration.
 func (d *ceph) CreateVolumeFromMigration(vol Volume, conn io.ReadWriteCloser, volTargetArgs localMigration.VolumeTargetArgs, preFiller *VolumeFiller, op *operations.Operation) error {
-	if volTargetArgs.ClusterMoveSourceName != "" {
+	if volTargetArgs.ClusterMoveSourceName != "" && volTargetArgs.StoragePool == "" {
 		err := vol.EnsureMountPath()
 		if err != nil {
 			return err
@@ -1173,7 +1173,7 @@ func (d *ceph) ListVolumes() ([]Volume, error) {
 		return nil, fmt.Errorf("Failed getting volume list: %v: %w", strings.TrimSpace(string(errMsg)), err)
 	}
 
-	volList := make([]Volume, len(vols))
+	volList := make([]Volume, 0, len(vols))
 	for _, v := range vols {
 		volList = append(volList, v)
 	}
@@ -1353,7 +1353,7 @@ func (d *ceph) RenameVolume(vol Volume, newVolName string, op *operations.Operat
 
 // MigrateVolume sends a volume for migration.
 func (d *ceph) MigrateVolume(vol Volume, conn io.ReadWriteCloser, volSrcArgs *localMigration.VolumeSourceArgs, op *operations.Operation) error {
-	if volSrcArgs.ClusterMove {
+	if volSrcArgs.ClusterMove && !volSrcArgs.StorageMove {
 		return nil // When performing a cluster member move don't do anything on the source member.
 	}
 

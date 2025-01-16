@@ -18,9 +18,8 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/auth"
 	"github.com/lxc/incus/v6/internal/server/certificate"
 	"github.com/lxc/incus/v6/internal/server/cluster"
@@ -43,6 +42,7 @@ import (
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/logger"
 	"github.com/lxc/incus/v6/shared/osarch"
+	"github.com/lxc/incus/v6/shared/revert"
 	localtls "github.com/lxc/incus/v6/shared/tls"
 	"github.com/lxc/incus/v6/shared/util"
 	"github.com/lxc/incus/v6/shared/validate"
@@ -430,9 +430,15 @@ func clusterPutJoin(d *Daemon, r *http.Request, req api.ClusterPut) response.Res
 		return response.BadRequest(fmt.Errorf("This server is already clustered"))
 	}
 
-	// The old pre 'clustering_join' join API approach is no longer supported.
+	// Validate server address.
 	if req.ServerAddress == "" {
 		return response.BadRequest(fmt.Errorf("No server address provided for this member"))
+	}
+
+	// Check that the provided address is an IP address or DNS, not wildcard and isn't required to specify a port.
+	err := validate.IsListenAddress(true, false, false)(req.ServerAddress)
+	if err != nil {
+		return response.BadRequest(fmt.Errorf("Invalid server address %q: %w", req.ServerAddress, err))
 	}
 
 	localHTTPSAddress := s.LocalConfig.HTTPSAddress()
@@ -759,11 +765,7 @@ func clusterPutJoin(d *Daemon, r *http.Request, req api.ClusterPut) response.Res
 		d.globalConfig = currentClusterConfig
 		d.globalConfigMu.Unlock()
 
-		existingConfigDump := currentClusterConfig.Dump()
-		changes := make(map[string]string, len(existingConfigDump))
-		for k, v := range existingConfigDump {
-			changes[k] = v
-		}
+		changes := util.CloneMap(currentClusterConfig.Dump())
 
 		err = doApi10UpdateTriggers(d, nil, changes, nodeConfig, currentClusterConfig)
 		if err != nil {
@@ -2894,7 +2896,7 @@ func clusterNodeStatePost(d *Daemon, r *http.Request) response.Response {
 		}
 
 		run := func(op *operations.Operation) error {
-			return evacuateClusterMember(context.Background(), s, d.gateway, op, name, req.Mode, stopFunc, migrateFunc)
+			return evacuateClusterMember(context.Background(), s, op, name, req.Mode, stopFunc, migrateFunc)
 		}
 
 		op, err := operations.OperationCreate(s, "", operations.OperationClassTask, operationtype.ClusterMemberEvacuate, nil, nil, run, nil, nil, r)

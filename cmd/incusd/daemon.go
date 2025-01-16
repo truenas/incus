@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/x509"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,10 +25,10 @@ import (
 	"github.com/gorilla/mux"
 	liblxc "github.com/lxc/go-lxc"
 	"golang.org/x/sys/unix"
+	yaml "gopkg.in/yaml.v2"
 
 	internalIO "github.com/lxc/incus/v6/internal/io"
 	"github.com/lxc/incus/v6/internal/linux"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/rsync"
 	"github.com/lxc/incus/v6/internal/server/acme"
 	"github.com/lxc/incus/v6/internal/server/apparmor"
@@ -80,6 +79,7 @@ import (
 	"github.com/lxc/incus/v6/shared/idmap"
 	"github.com/lxc/incus/v6/shared/logger"
 	"github.com/lxc/incus/v6/shared/proxy"
+	"github.com/lxc/incus/v6/shared/revert"
 	localtls "github.com/lxc/incus/v6/shared/tls"
 	"github.com/lxc/incus/v6/shared/util"
 )
@@ -480,6 +480,11 @@ func (d *Daemon) Authenticate(w http.ResponseWriter, r *http.Request) (bool, str
 	// Cluster notification with wrong certificate.
 	if isClusterNotification(r) {
 		return false, "", "", fmt.Errorf("Cluster notification isn't using trusted server certificate")
+	}
+
+	// Cluster internal client with wrong certificate.
+	if isClusterInternal(r) {
+		return false, "", "", fmt.Errorf("Cluster internal client isn't using trusted server certificate")
 	}
 
 	// Bad query, no TLS found.
@@ -1719,6 +1724,9 @@ func (d *Daemon) startClusterTasks() {
 	// Perform automatic evacuation for offline cluster members
 	d.clusterTasks.Add(autoHealClusterTask(d))
 
+	// Perform automatic live-migration to alance load on cluster
+	d.clusterTasks.Add(autoRebalanceClusterTask(d))
+
 	// Start all background tasks
 	d.clusterTasks.Start(d.shutdownCtx)
 }
@@ -2388,7 +2396,7 @@ func (d *Daemon) heartbeatHandler(w http.ResponseWriter, r *http.Request, isLead
 			// Check if we have a recent local cache entry already.
 			resourcesPath := internalUtil.CachePath("resources", fmt.Sprintf("%s.yaml", name))
 			fi, err := os.Stat(resourcesPath)
-			if err == nil && fi.ModTime().Before(time.Now().Add(time.Hour)) {
+			if err == nil && time.Since(fi.ModTime()) < time.Hour {
 				return
 			}
 
@@ -2405,7 +2413,7 @@ func (d *Daemon) heartbeatHandler(w http.ResponseWriter, r *http.Request, isLead
 			}
 
 			// Write to cache.
-			data, err := json.Marshal(resources)
+			data, err := yaml.Marshal(resources)
 			if err != nil {
 				return
 			}

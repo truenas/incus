@@ -78,6 +78,7 @@ func InstancePlacementCompile(name string, src string) (*starlark.Program, error
 		"get_cluster_member_state",
 		"get_instance_resources",
 		"get_instances",
+		"get_instances_count",
 		"get_cluster_members",
 		"get_project",
 	})
@@ -107,6 +108,21 @@ func QEMUCompile(name string, src string) (*starlark.Program, error) {
 		"log_warn",
 		"log_error",
 		"run_qmp",
+		"run_command",
+		"blockdev_add",
+		"blockdev_del",
+		"chardev_add",
+		"chardev_change",
+		"chardev_remove",
+		"device_add",
+		"device_del",
+		"netdev_add",
+		"netdev_del",
+		"object_add",
+		"object_del",
+		"qom_get",
+		"qom_list",
+		"qom_set",
 	})
 }
 

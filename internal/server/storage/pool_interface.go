@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/lxc/incus/v6/internal/instancewriter"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/backup"
 	backupConfig "github.com/lxc/incus/v6/internal/server/backup/config"
 	"github.com/lxc/incus/v6/internal/server/cluster/request"
@@ -16,6 +15,7 @@ import (
 	"github.com/lxc/incus/v6/internal/server/storage/drivers"
 	"github.com/lxc/incus/v6/internal/server/storage/s3/miniod"
 	"github.com/lxc/incus/v6/shared/api"
+	"github.com/lxc/incus/v6/shared/revert"
 )
 
 // VolumeUsage contains the used and total size of a volume.
@@ -126,7 +126,7 @@ type Pool interface {
 	MountCustomVolume(projectName string, volName string, op *operations.Operation) (*MountInfo, error)
 	UnmountCustomVolume(projectName string, volName string, op *operations.Operation) (bool, error)
 	ImportCustomVolume(projectName string, poolVol *backupConfig.Config, op *operations.Operation) (revert.Hook, error)
-	RefreshCustomVolume(projectName string, srcProjectName string, volName, desc string, config map[string]string, srcPoolName, srcVolName string, snapshots bool, op *operations.Operation) error
+	RefreshCustomVolume(projectName string, srcProjectName string, volName, desc string, config map[string]string, srcPoolName, srcVolName string, snapshots bool, excludeOlder bool, op *operations.Operation) error
 	GenerateCustomVolumeBackupConfig(projectName string, volName string, snapshots bool, op *operations.Operation) (*backupConfig.Config, error)
 	CreateCustomVolumeFromISO(projectName string, volName string, srcData io.ReadSeeker, size int64, op *operations.Operation) error
 

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/lxc/incus/v6/internal/revert"
 	deviceConfig "github.com/lxc/incus/v6/internal/server/device/config"
 	"github.com/lxc/incus/v6/internal/server/instance"
 	"github.com/lxc/incus/v6/internal/server/instance/instancetype"
@@ -16,6 +15,7 @@ import (
 	"github.com/lxc/incus/v6/internal/server/network"
 	localUtil "github.com/lxc/incus/v6/internal/server/util"
 	"github.com/lxc/incus/v6/shared/api"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/util"
 )
 
@@ -51,13 +51,14 @@ func (d *nicMACVLAN) validateConfig(instConf instance.ConfigReader) error {
 		"vlan",
 		"boot.priority",
 		"gvrp",
+		"mode",
 	}
 
 	// Check that if network proeperty is set that conflicting keys are not present.
 	if d.config["network"] != "" {
 		requiredFields = append(requiredFields, "network")
 
-		bannedKeys := []string{"nictype", "parent", "mtu", "vlan", "gvrp"}
+		bannedKeys := []string{"nictype", "parent", "mtu", "vlan", "gvrp", "mode"}
 		for _, bannedKey := range bannedKeys {
 			if d.config[bannedKey] != "" {
 				return fmt.Errorf("Cannot use %q property in conjunction with %q property", bannedKey, "network")
@@ -180,7 +181,20 @@ func (d *nicMACVLAN) Start() (*deviceConfig.RunConfig, error) {
 			Name:   saveData["host_name"],
 			Parent: actualParentName,
 		},
-		Mode: "bridge",
+	}
+
+	mode := d.config["mode"]
+	if mode != "" {
+		// Validate the provided mode.
+		switch mode {
+		case "bridge", "vepa", "passthru", "private":
+			link.Mode = mode
+		default:
+			return nil, fmt.Errorf("Invalid MACVLAN mode specified: %q", mode)
+		}
+	} else {
+		// Default to bridge mode if not specified.
+		link.Mode = "bridge"
 	}
 
 	// Set the MAC address.

@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	internalInstance "github.com/lxc/incus/v6/internal/instance"
-	"github.com/lxc/incus/v6/internal/revert"
 	"github.com/lxc/incus/v6/internal/server/locking"
 	"github.com/lxc/incus/v6/internal/server/operations"
 	"github.com/lxc/incus/v6/internal/server/refcount"
 	"github.com/lxc/incus/v6/shared/api"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/units"
 	"github.com/lxc/incus/v6/shared/util"
 )
@@ -233,8 +234,46 @@ func (v Volume) EnsureMountPath() error {
 		revert.Add(func() { _ = os.Remove(volPath) })
 	}
 
-	// Set very restrictive mode 0100 for non-custom, non-bucket and non-image volumes.
 	mode := os.FileMode(0711)
+	if v.volType == VolumeTypeCustom && v.contentType == ContentTypeFS {
+		initialMode := v.ExpandedConfig("initial.mode")
+		if initialMode != "" {
+			m, err := strconv.ParseInt(initialMode, 8, 0)
+			if err != nil {
+				return err
+			}
+
+			mode = os.FileMode(m)
+		}
+
+		uid, gid := 0, 0
+		var err error
+		initialUID := v.ExpandedConfig("initial.uid")
+		if initialUID != "" {
+			uid, err = strconv.Atoi(initialUID)
+			if err != nil {
+				return err
+			}
+		}
+
+		initialGID := v.ExpandedConfig("initial.gid")
+		if initialGID != "" {
+			gid, err = strconv.Atoi(initialGID)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Set the owner of a custom volume if uid or gid have been set.
+		if uid != 0 || gid != 0 {
+			err = os.Chown(volPath, uid, gid)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// Set very restrictive mode 0100 for non-custom, non-bucket and non-image volumes.
 	if v.volType != VolumeTypeCustom && v.volType != VolumeTypeImage && v.volType != VolumeTypeBucket {
 		mode = os.FileMode(0100)
 	}
@@ -577,16 +616,10 @@ func (v *Volume) SetHasSource(hasSource bool) {
 // Clone returns a copy of the volume.
 func (v Volume) Clone() Volume {
 	// Copy the config map to avoid internal modifications affecting external state.
-	newConfig := make(map[string]string, len(v.config))
-	for k, v := range v.config {
-		newConfig[k] = v
-	}
+	newConfig := util.CloneMap(v.config)
 
 	// Copy the pool config map to avoid internal modifications affecting external state.
-	newPoolConfig := make(map[string]string, len(v.poolConfig))
-	for k, v := range v.poolConfig {
-		newPoolConfig[k] = v
-	}
+	newPoolConfig := util.CloneMap(v.poolConfig)
 
 	return NewVolume(v.driver, v.pool, v.volType, v.contentType, v.name, newConfig, newPoolConfig)
 }
