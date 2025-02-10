@@ -34,6 +34,24 @@
                 "sudo"
             ],
             "console": "integratedTerminal",
+        },
+        {
+            "name": "Launch Incusd --debug",
+            "type":"go",
+            "request": "launch",
+            "mode": "exec",
+            "asRoot": true,
+            "program": "${userHome}/go/bin/incusd",
+            "env": {
+                "PATH": "${env:PATH}:${userHome}/go/bin/",
+                "LD_LIBRARY_PATH": "${userHome}/go/deps/raft/.libs/:/home/stux/go/deps/cowsql/.libs/"
+            },
+            "args": [
+                "--group",
+                "sudo",
+                "--debug"
+            ],
+            "console": "integratedTerminal",
         }
     ]
 }

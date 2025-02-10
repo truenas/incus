@@ -411,7 +411,7 @@ func (d *truenas) activateVolume(vol Volume) (bool, error) {
 			return false, fmt.Errorf("Failed to activate volume: %v", err)
 		}
 
-		d.logger.Debug("Activated ZFS volume", logger.Ctx{"volName": vol.Name(), "dev": dataset})
+		d.logger.Debug("Activated TrueNAS volume", logger.Ctx{"volName": vol.Name(), "dev": dataset})
 
 		reverter.Success()
 		return true, nil
@@ -453,7 +453,7 @@ func (d *truenas) deactivateVolume(vol Volume) (bool, error) {
 			}
 
 			if !util.PathExists(devPath) {
-				d.logger.Debug("Deactivated ZFS volume", logger.Ctx{"volName": vol.name, "dev": dataset})
+				d.logger.Debug("Deactivated TrueNAS volume", logger.Ctx{"volName": vol.name, "dev": dataset})
 				break
 			}
 
@@ -462,7 +462,7 @@ func (d *truenas) deactivateVolume(vol Volume) (bool, error) {
 			}
 
 			// Wait for ZFS a chance to flush and udev to remove the device path.
-			d.logger.Debug("Waiting for ZFS volume to deactivate", logger.Ctx{"volName": vol.name, "dev": dataset, "path": devPath, "attempt": i})
+			d.logger.Debug("Waiting for TrueNAS volume to deactivate", logger.Ctx{"volName": vol.name, "dev": dataset, "path": devPath, "attempt": i})
 
 			if i <= 5 {
 				// Retry more quickly early on.

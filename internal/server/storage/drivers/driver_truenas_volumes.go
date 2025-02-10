@@ -1785,7 +1785,7 @@ func (d *truenas) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 					return err
 				}
 
-				l.Debug("ZFS volume filesystem shrunk")
+				l.Debug("TrueNAS volume filesystem shrunk")
 
 				// Shrink the block device.
 				err = d.setDatasetProperties(d.dataset(vol, false), fmt.Sprintf("volsize=%d", sizeBytes))
@@ -1805,7 +1805,7 @@ func (d *truenas) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 					return err
 				}
 
-				l.Debug("ZFS volume filesystem grown")
+				l.Debug("TrueNAS volume filesystem grown")
 			}
 		} else {
 			// Block image volumes cannot be resized because they have a readonly snapshot that doesn't get
@@ -2267,15 +2267,15 @@ func (d *truenas) MountVolume(vol Volume, op *operations.Operation) error {
 					if err != nil {
 						return err
 					}
+				} else {
+					return err
 				}
-			} else {
-				return err
 			}
 
 			_ = mountFlags
 			_ = mountOptions
 
-			d.logger.Debug("Mounted ZFS dataset", logger.Ctx{"volName": vol.name, "dev": dataset, "path": mountPath})
+			d.logger.Debug("Mounted TrueNAS dataset", logger.Ctx{"volName": vol.name, "dev": dataset, "path": mountPath})
 		}
 	} else {
 		// // For block devices, we make them appear.
@@ -2354,17 +2354,17 @@ func (d *truenas) UnmountVolume(vol Volume, keepBlockDev bool, op *operations.Op
 
 		blockBacked := d.isBlockBacked(vol)
 		if blockBacked {
-			d.logger.Debug("Unmounted ZFS volume", logger.Ctx{"volName": vol.name, "dev": dataset, "path": mountPath})
+			d.logger.Debug("Unmounted TrueNAS volume", logger.Ctx{"volName": vol.name, "dev": dataset, "path": mountPath})
 		} else {
-			d.logger.Debug("Unmounted ZFS dataset", logger.Ctx{"volName": vol.name, "dev": dataset, "path": mountPath})
+			d.logger.Debug("Unmounted TrueNAS dataset", logger.Ctx{"volName": vol.name, "dev": dataset, "path": mountPath})
 		}
 
-		if !blockBacked && zfsDelegate && util.IsTrue(vol.config["zfs.delegate"]) {
-			err = d.setDatasetProperties(dataset, "zoned=off")
-			if err != nil {
-				return false, err
-			}
-		}
+		// if !blockBacked && zfsDelegate && util.IsTrue(vol.config["zfs.delegate"]) {
+		// 	err = d.setDatasetProperties(dataset, "zoned=off")
+		// 	if err != nil {
+		// 		return false, err
+		// 	}
+		//}
 
 		// if blockBacked && !keepBlockDev {
 		// 	// For block devices, we make them disappear if active.
@@ -3176,7 +3176,7 @@ func (d *truenas) mountVolumeSnapshot(snapVol Volume, snapshotDataset string, mo
 				// Wait half a second to give udev a chance to kick in.
 				time.Sleep(500 * time.Millisecond)
 
-				d.logger.Debug("Activated ZFS volume", logger.Ctx{"dev": dataset})
+				d.logger.Debug("Activated TrueNAS volume", logger.Ctx{"dev": dataset})
 
 				// We are going to mount the temporary volume instead.
 				mountVol = tmpVol
@@ -3233,7 +3233,7 @@ func (d *truenas) mountVolumeSnapshot(snapVol Volume, snapshotDataset string, mo
 		}
 	}
 
-	d.logger.Debug("Mounted ZFS snapshot dataset", logger.Ctx{"dev": snapshotDataset, "path": mountPath})
+	d.logger.Debug("Mounted TrueNAS snapshot dataset", logger.Ctx{"dev": snapshotDataset, "path": mountPath})
 
 	revert.Add(func() {
 		_, err := forceUnmount(mountPath)
@@ -3241,7 +3241,7 @@ func (d *truenas) mountVolumeSnapshot(snapVol Volume, snapshotDataset string, mo
 			return
 		}
 
-		d.logger.Debug("Unmounted ZFS snapshot dataset", logger.Ctx{"dev": snapshotDataset, "path": mountPath})
+		d.logger.Debug("Unmounted TrueNAS snapshot dataset", logger.Ctx{"dev": snapshotDataset, "path": mountPath})
 	})
 
 	cleanup := revert.Clone().Fail
