@@ -14,8 +14,9 @@ test_storage() {
   local storage_pool storage_volume
   storage_pool="incustest-$(basename "${INCUS_DIR}")-pool"
   storage_volume="${storage_pool}-vol"
-
-  if [ "${incus_backend}" = "truenas" ]; then
+  if [ "${incus_backend}" = "linstor" ]; then
+      incus storage create "$storage_pool" "$incus_backend" linstor.resource_group.place_count=1 --description foo
+  elif [ "${incus_backend}" = "truenas" ]; then
        incus storage create "$storage_pool" "$incus_backend" "$(truenas_source)/" "$(truenas_api_key)" --description foo
   else
        incus storage create "$storage_pool" "$incus_backend" --description foo
@@ -886,7 +887,9 @@ test_storage() {
   # shellcheck disable=SC2031,2269
   INCUS_DIR="${INCUS_DIR}"
   storage_pool="incustest-$(basename "${INCUS_DIR}")-pool26"
-  if [ "${incus_backend}" = "truenas" ]; then
+  if [ "${incus_backend}" = "linstor" ]; then
+      incus storage create "$storage_pool" "$incus_backend" linstor.resource_group.place_count=1
+  elif [ "${incus_backend}" = "truenas" ]; then
     incus storage create "$storage_pool" "$incus_backend" "$(truenas_source_uuid)" "$(truenas_api_key)"
   else 
     incus storage create "$storage_pool" "$incus_backend"
