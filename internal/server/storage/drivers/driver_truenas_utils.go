@@ -20,15 +20,22 @@ const (
 func (d *truenas) dataset(vol Volume, deleted bool) string {
 	name, snapName, _ := api.GetParentAndSnapshotName(vol.name)
 
-	if vol.volType == VolumeTypeImage && vol.contentType == ContentTypeFS && d.isBlockBacked(vol) {
+	/*
+		update, we can't tell the when generating an image name, thus we MUST not append <filesytem> to an image name... unless its
+		deleted... in which case we probably can.
+	*/
+
+	// need to disambiguate different images based on the root.img filesystem
+	//if vol.volType == VolumeTypeImage && vol.contentType == ContentTypeFS && d.isBlockBacked(vol) {
+	if deleted && vol.volType == VolumeTypeImage && ((vol.contentType == ContentTypeFS && needsFsImgVol(vol)) || isFsImgVol(vol)) {
 		name = fmt.Sprintf("%s_%s", name, vol.ConfigBlockFilesystem())
 	}
 
-	if (vol.volType == VolumeTypeVM || vol.volType == VolumeTypeImage) && vol.contentType == ContentTypeBlock {
-		//name = fmt.Sprintf("%s%s", name, zfsBlockVolSuffix)
-	} else if vol.volType == VolumeTypeCustom && vol.contentType == ContentTypeISO {
-		//name = fmt.Sprintf("%s%s", name, zfsISOVolSuffix)
-	}
+	// if (vol.volType == VolumeTypeVM || vol.volType == VolumeTypeImage) && vol.contentType == ContentTypeBlock {
+	// 	name = fmt.Sprintf("%s%s", name, zfsBlockVolSuffix)
+	// } else if vol.volType == VolumeTypeCustom && vol.contentType == ContentTypeISO {
+	// 	name = fmt.Sprintf("%s%s", name, zfsISOVolSuffix)
+	// }
 
 	if snapName != "" {
 		if deleted {
@@ -294,6 +301,26 @@ func (d *truenas) createDatasets(datasets []string, options ...string) error {
 
 	args = append(args, datasets...)
 
+	out, err := d.runTool(args...)
+	_ = out
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// take a recursive snapshot of dataset@snapname, and optionally delete the old snapshot first
+func (d *truenas) createSnapshot(snapName string, delete bool) error {
+	args := []string{"snapshot", "create", "-r"}
+
+	if delete {
+		args = append(args, "--delete")
+	}
+
+	args = append(args, snapName)
+
+	// Make the snapshot.
 	out, err := d.runTool(args...)
 	_ = out
 	if err != nil {

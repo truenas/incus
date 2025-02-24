@@ -27,14 +27,75 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ContentTypeRootImg implies the filesystem contains a root.img which itself contains a filesystem
+const ContentTypeFsImg = ContentType("fs-img")
+
+// returns a clone of the img, but margked as an fs-img
+func cloneVolAsFsImgVol(vol Volume) Volume {
+	fsImgVol := vol.Clone()
+
+	//fsImgVol.mountCustomPath = fmt.Sprintf("%s_%s", fsImgVol.MountPath(), fsImgVol.ConfigBlockFilesystem())
+	//fsImgVol.mountCustomPath = fmt.Sprintf("%s_%s", fsImgVol.MountPath(), fsImgVol.ConfigBlockFilesystem())
+	fsImgVol.mountCustomPath = fsImgVol.MountPath() + ".block"
+
+	//fsImgVol.config["volatile.truenas.fs-img"] = "true"
+	fsImgVol.contentType = ContentTypeFsImg
+
+	return fsImgVol
+}
+
+func isFsImgVol(vol Volume) bool {
+	/*
+		we need a third volume type so that we can tell the difference between an
+		image:fs and an image:block, adn the image:block's config mount.
+
+		Additionally, to mount the backing image for an image:fs, we need to use a
+		different contentType to obtain a separate lock, without using block (see above)
+	*/
+	return vol.contentType == ContentTypeFsImg
+
+}
+
+func needsFsImgVol(vol Volume) bool {
+	/*
+		does the volume need an underlying FsImgVol
+
+		the trick is to make sure that Images etc that aren't created via NewVMBlockFilesystemVolume
+		are marked as loop-vols, where as NewVMBlockFilesystemVolume must not be.
+
+		This is accomplished by ensuring that block.filesistem is applied in FillVolumeConfig
+	*/
+	return vol.contentType == ContentTypeFS && vol.config["block.filesystem"] != ""
+}
+
 // CreateVolume creates an empty volume and can optionally fill it by executing the supplied
 // filler function.
 func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.Operation) error {
+	/*
+		incus storage volume create incusdev <name> --type=block
+			name: "<project>_<name>"
+			volType: "custom"		VolumeTypeCustom
+			contentType: "block"	ContentTypeBlock
+
+		incus storage volume create incusdev <name>
+			name: "<project>_<name>"
+			volType: "custom"		VolumeTypeCustom
+			contentType: "filesystem"	ContentTypeFS
+
+		incus storage volume create incusdev <name> zfs.block_mode=true
+
+		incus create --empty empty2 --storage incusdev
+			volType: "containers"
+			contentType: "filesystem"
+
+
+
+	*/
+
 	// Revert handling
 	revert := revert.New()
 	defer revert.Fail()
 
-	//if vol.contentType == ContentTypeFS {
 	// Create mountpoint.
 	err := vol.EnsureMountPath()
 	if err != nil {
@@ -42,11 +103,11 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 	}
 
 	revert.Add(func() { _ = os.Remove(vol.MountPath()) })
-	//}
 
-	// Look for previously deleted images.
-	if vol.volType == VolumeTypeImage {
-		exists, err := d.datasetExists(d.dataset(vol, true))
+	// Look for previously deleted images. (don't look for underlying, or we'll look after we've looked)
+	if vol.volType == VolumeTypeImage && !isFsImgVol(vol) {
+		dataset := d.dataset(vol, true)
+		exists, err := d.datasetExists(dataset)
 		if err != nil {
 			return err
 		}
@@ -57,7 +118,7 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 			if vol.IsBlockBacked() && (vol.contentType == ContentTypeBlock || d.isBlockBacked(vol)) {
 				// For block volumes check if the cached image volume is larger than the current pool volume.size
 				// setting (if so we won't be able to resize the snapshot to that the smaller size later).
-				volSize, err := d.getDatasetProperty(d.dataset(vol, true), "volsize")
+				volSize, err := d.getDatasetProperty(dataset, "volsize")
 				if err != nil {
 					return err
 				}
@@ -90,7 +151,7 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 					d.logger.Debug("Renaming deleted cached image volume so that regeneration is used", logger.Ctx{"fingerprint": vol.Name()})
 					randomVol := NewVolume(d, d.name, vol.volType, vol.contentType, d.randomVolumeName(vol), vol.config, vol.poolConfig)
 
-					_, err := subprocess.RunCommand("/proc/self/exe", "forkzfs", "--", "rename", d.dataset(vol, true), d.dataset(randomVol, true))
+					_, err := subprocess.RunCommand("/proc/self/exe", "forkzfs", "--", "rename", dataset, d.dataset(randomVol, true))
 					//_, err := d.runTool("dataset", "rename", d.dataset(vol, true), d.dataset(randomVol, true))
 					if err != nil {
 						return err
@@ -117,7 +178,7 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 			if canRestore {
 				d.logger.Debug("Restoring previously deleted cached image volume", logger.Ctx{"fingerprint": vol.Name()})
 				//_, err := subprocess.RunCommand("/proc/self/exe", "forkzfs", "--", "rename", d.dataset(vol, true), d.dataset(vol, false))
-				_, err := d.runTool("dataset", "rename", d.dataset(vol, true), d.dataset(vol, false))
+				_, err := d.runTool("dataset", "rename", dataset, d.dataset(vol, false))
 				if err != nil {
 					return err
 				}
@@ -139,16 +200,52 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		}
 	}
 
-	// After this point we'll have a volume, so setup revert.
+	// After this point we may have a volume, so setup revert.
 	revert.Add(func() { _ = d.DeleteVolume(vol, op) })
 
-	// se: even if a block volume, we still need a filesystem dataset...
-	//if vol.contentType == ContentTypeFS && !d.isBlockBacked(vol)
-	{
+	/*
+		if we are creating a block_mode volume we start by creating a regular fs to host
+	*/
+	if needsFsImgVol(vol) { // ie create the fs-img
+		/*
+			by making an FS Block volume, we automatically create the root.img file and fill it out
+			same as we do for a VM, which means we can now mount it too.
+		*/
+		fsImgVol := cloneVolAsFsImgVol(vol)
+
+		innerFiller := &VolumeFiller{
+			Fill: func(innerVol Volume, rootBlockPath string, allowUnsafeResize bool) (int64, error) {
+				// Get filesystem.
+				filesystem := vol.ConfigBlockFilesystem() // outer-vol.
+
+				if vol.contentType == ContentTypeFS {
+					_, err := makeFSType(rootBlockPath, filesystem, nil)
+					if err != nil {
+						return 0, err
+					}
+				}
+
+				return 0, nil
+			},
+		}
+
+		/*
+			create volume will mount, create the image file, then call our filler, and unmount, and then we can take care of the mounting the side-car
+			in MountVolume
+		*/
+		err := d.CreateVolume(fsImgVol, innerFiller, op)
+		if err != nil {
+			return err
+		}
+		revert.Add(func() { _ = d.DeleteVolume(fsImgVol, op) })
+	}
+
+	// for  block or fs-img we need to create a dataset
+	if vol.contentType == ContentTypeBlock || isFsImgVol(vol) {
 		// Create the filesystem dataset.
 		dataset := d.dataset(vol, false)
 
-		err := d.createDataset(dataset)
+		err := d.createDataset(dataset) // TODO: we should set the filesystem on the dataset so that it can be recovered eventually in ListVolumes (and possibly mount options)
 		if err != nil {
 			return err
 		}
@@ -172,24 +269,34 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		}
 	}
 
-	// Get path to disk volume if volume is block or iso.
-	rootBlockPath := ""
-	if IsContentBlock(vol.contentType) {
-		// We expect the filler to copy the VM image into this path.
-		rootBlockPath, err = d.GetVolumeDiskPath(vol)
-		if err != nil {
-			return err
-		}
-	}
-
 	err = vol.MountTask(func(mountPath string, op *operations.Operation) error {
+
+		// path to disk volume if volume is block or iso.
+		var rootBlockPath string
 
 		// If we are creating a block volume, resize it to the requested size or the default.
 		// For block volumes, we expect the filler function to have converted the qcow2 image to raw into the rootBlockPath.
 		// For ISOs the content will just be copied.
-		if IsContentBlock(vol.contentType) {
+		if IsContentBlock(vol.contentType) || isFsImgVol(vol) {
+
+			// TODO: this relies on "isBlockBacked" for fs-img blockbacked vols.
 			// Convert to bytes.
 			sizeBytes, err := units.ParseByteSizeString(vol.ConfigSize())
+			if err != nil {
+				return err
+			}
+
+			if sizeBytes == 0 {
+				blockVol := vol.Clone()
+				blockVol.contentType = ContentTypeBlock
+				sizeBytes, err = units.ParseByteSizeString(blockVol.ConfigSize())
+				if err != nil {
+					return err
+				}
+			}
+
+			// We expect the filler to copy the VM image into this path.
+			rootBlockPath, err = d.GetVolumeDiskPath(vol)
 			if err != nil {
 				return err
 			}
@@ -203,26 +310,16 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 
 			// Move the GPT alt header to end of disk if needed and if filler specified.
 			if vol.IsVMBlock() && filler != nil && filler.Fill != nil {
-				err = d.moveGPTAltHeader(rootBlockPath)
-				if err != nil {
-					return err
-				}
+				// err = d.moveGPTAltHeader(rootBlockPath)
+				// if err != nil {
+				// 	return err
+				// }
 			}
 		}
 
 		// Run the volume filler function if supplied.
 		if filler != nil && filler.Fill != nil {
 			var err error
-			var devPath string
-
-			if IsContentBlock(vol.contentType) {
-				// Get the device path.
-				devPath, err = d.GetVolumeDiskPath(vol)
-				if err != nil {
-					return err
-				}
-				devPath = rootBlockPath
-			}
 
 			allowUnsafeResize := false
 			if vol.volType == VolumeTypeImage {
@@ -240,17 +337,17 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 			}
 
 			// Run the filler.
-			err = d.runFiller(vol, devPath, filler, allowUnsafeResize)
+			err = d.runFiller(vol, rootBlockPath, filler, allowUnsafeResize)
 			if err != nil {
 				return err
 			}
 
 			// Move the GPT alt header to end of disk if needed.
-			if vol.IsVMBlock() {
-				err = d.moveGPTAltHeader(devPath)
-				if err != nil {
-					return err
-				}
+			if vol.IsVMBlock() { // TODO: this will corrupt our image that we lay down.
+				// err = d.moveGPTAltHeader(rootBlockPath)
+				// if err != nil {
+				// 	return err
+				// }
 			}
 		}
 
@@ -270,34 +367,20 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 	}
 
 	// Setup snapshot and unset mountpoint on image.
-	if vol.volType == VolumeTypeImage {
+	if vol.volType == VolumeTypeImage && !isFsImgVol(vol) {
+
+		// ideally, we don't want to snap the underlying when we create the img, but rather after we've unpacked.
+		// note: we may need to sync the underlying filesystem, it depends if its still mounted, I think it shouldn't be.
+
+		dataset := d.dataset(vol, false)
+		snapName := fmt.Sprintf("%s@readonly", dataset)
+
 		// Create snapshot of the main dataset.
-		//_, err := subprocess.RunCommand("zfs", "snapshot", "-r", fmt.Sprintf("%s@readonly", d.dataset(vol, false)))
-		out, err := d.runTool("snapshot", "create", "-r", fmt.Sprintf("%s@readonly", d.dataset(vol, false)))
-		_ = out
+		err := d.createSnapshot(snapName, false)
 		if err != nil {
 			return err
 		}
 
-		// if vol.contentType == ContentTypeBlock {
-		// 	// Re-create the FS config volume's readonly snapshot now that the filler function has run
-		// 	// and unpacked into both config and block volumes.
-		// 	fsVol := vol.NewVMBlockFilesystemVolume()
-
-		// 	//_, err := subprocess.RunCommand("zfs", "destroy", "-r", fmt.Sprintf("%s@readonly", d.dataset(fsVol, false)))
-		// 	out, err := d.runTool("snapshot", "rm", "-r", fmt.Sprintf("%s@readonly", d.dataset(fsVol, false)))
-		// 	_ = out
-		// 	if err != nil {
-		// 		return err
-		// 	}
-
-		// 	//_, err = subprocess.RunCommand("zfs", "snapshot", "-r", fmt.Sprintf("%s@readonly", d.dataset(fsVol, false)))
-		// 	out, err = d.runTool("snapshot", "create", "-r", fmt.Sprintf("%s@readonly", d.dataset(fsVol, false)))
-		// 	_ = out
-		// 	if err != nil {
-		// 		return err
-		// 	}
-		// }
 	}
 
 	// All done.
@@ -587,9 +670,7 @@ func (d *truenas) CreateVolumeFromCopy(vol Volume, srcVol Volume, copySnapshots 
 		// Create a new snapshot for copy.
 		srcSnapshot = fmt.Sprintf("%s@copy-%s", d.dataset(srcVol, false), uuid.New().String())
 
-		//_, err := subprocess.RunCommand("zfs", "snapshot", "-r", srcSnapshot)
-		out, err := d.runTool("snapshot", "create", "-r", srcSnapshot)
-		_ = out
+		err := d.createSnapshot(srcSnapshot, false)
 		if err != nil {
 			return err
 		}
@@ -836,30 +917,58 @@ func (d *truenas) CreateVolumeFromCopy(vol Volume, srcVol Volume, copySnapshots 
 			}
 		}
 
+		// would be better to mount where below does "activate"
+
+		// Mounts the volume and ensure the permissions are set correctly inside the mounted volume.
+		verifyVolMountPath := func() error {
+			return vol.MountTask(func(_ string, _ *operations.Operation) error {
+				return vol.EnsureMountPath()
+			}, op)
+		}
+
 		if d.isBlockBacked(srcVol) && renegerateFilesystemUUIDNeeded(vol.ConfigBlockFilesystem()) {
+
+			// regen must be done with vol unmounted.
+
 			// _, err := d.activateVolume(vol)
 			// if err != nil {
 			// 	return err
 			// }
 
-			volPath, err := d.GetVolumeDiskPath(vol)
+			// TODO: to do this we need to mount the fs-img.
+			fsImgVol := cloneVolAsFsImgVol(vol)
+			err := fsImgVol.MountTask(func(mountPath string, op *operations.Operation) error {
+
+				rootBlockPath, err := d.GetVolumeDiskPath(fsImgVol)
+				if err != nil {
+					return err
+				}
+
+				d.logger.Debug("Regenerating filesystem UUID", logger.Ctx{"dev": rootBlockPath, "fs": vol.ConfigBlockFilesystem()})
+				err = regenerateFilesystemUUID(vol.ConfigBlockFilesystem(), rootBlockPath)
+				if err != nil {
+					return err
+				}
+
+				// performing the mount while the fsImg is mounted prevents repeated remounts.
+				err = verifyVolMountPath()
+				if err != nil {
+					return err
+				}
+
+				return nil
+			}, op)
+
 			if err != nil {
 				return err
 			}
 
-			d.logger.Debug("Regenerating filesystem UUID", logger.Ctx{"dev": volPath, "fs": vol.ConfigBlockFilesystem()})
-			err = regenerateFilesystemUUID(vol.ConfigBlockFilesystem(), volPath)
+		} else {
+			// Mount the volume and ensure the permissions are set correctly inside the mounted volume.
+			err = verifyVolMountPath()
 			if err != nil {
 				return err
 			}
-		}
-
-		// Mount the volume and ensure the permissions are set correctly inside the mounted volume.
-		err := vol.MountTask(func(_ string, _ *operations.Operation) error {
-			return vol.EnsureMountPath()
-		}, op)
-		if err != nil {
-			return err
 		}
 	}
 
@@ -1495,31 +1604,32 @@ func (d *truenas) DeleteVolume(vol Volume, op *operations.Operation) error {
 
 func (d *truenas) deleteVolume(vol Volume, op *operations.Operation) error {
 	// Check that we have a dataset to delete.
-	exists, err := d.datasetExists(d.dataset(vol, false))
+	dataset := d.dataset(vol, false)
+	exists, err := d.datasetExists(dataset)
 	if err != nil {
 		return err
 	}
 
 	if exists {
 		// Handle clones.
-		clones, err := d.getClones(d.dataset(vol, false))
+		clones, err := d.getClones(dataset)
 		if err != nil {
 			return err
 		}
 
 		if len(clones) > 0 {
 			// Deleted volumes do not need shares
-			_ = d.deleteNfsShare(d.dataset(vol, false))
+			_ = d.deleteNfsShare(dataset)
 
 			// Move to the deleted path.
 			//_, err := subprocess.RunCommand("/proc/self/exe", "forkzfs", "--", "rename", d.dataset(vol, false), d.dataset(vol, true))
-			out, err := d.renameDataset(d.dataset(vol, false), d.dataset(vol, true), false)
+			out, err := d.renameDataset(dataset, d.dataset(vol, true), false)
 			_ = out
 			if err != nil {
 				return err
 			}
 		} else {
-			err := d.deleteDatasetRecursive(d.dataset(vol, false))
+			err := d.deleteDatasetRecursive(dataset)
 			if err != nil {
 				return err
 			}
@@ -1538,6 +1648,15 @@ func (d *truenas) deleteVolume(vol Volume, op *operations.Operation) error {
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("Failed to remove '%s': %w", GetVolumeSnapshotDir(d.name, vol.volType, vol.name), err)
 		}
+
+		// TODO: we should probably cleanup using DeleteVolume.
+		if needsFsImgVol(vol) {
+			fsImgVol := cloneVolAsFsImgVol(vol)
+			err := os.Remove(fsImgVol.MountPath())
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("Failed to remove '%s': %w", fsImgVol.MountPath(), err)
+			}
+		}
 	}
 
 	return nil
@@ -1546,7 +1665,8 @@ func (d *truenas) deleteVolume(vol Volume, op *operations.Operation) error {
 // HasVolume indicates whether a specific volume exists on the storage pool.
 func (d *truenas) HasVolume(vol Volume) (bool, error) {
 	// Check if the dataset exists.
-	return d.datasetExists(d.dataset(vol, false))
+	dataset := d.dataset(vol, false)
+	return d.datasetExists(dataset)
 }
 
 // commonVolumeRules returns validation rules which are common for pool and volume.
@@ -1554,7 +1674,7 @@ func (d *truenas) commonVolumeRules() map[string]func(value string) error {
 	return map[string]func(value string) error{
 		"block.filesystem":     validate.Optional(validate.IsOneOf(blockBackedAllowedFilesystems...)),
 		"block.mount_options":  validate.IsAny,
-		"zfs.block_mode":       validate.Optional(validate.IsBool),
+		"truenas.block_mode":   validate.Optional(validate.IsBool),
 		"zfs.blocksize":        validate.Optional(ValidateZfsBlocksize),
 		"zfs.remove_snapshots": validate.Optional(validate.IsBool),
 		"zfs.reserve_space":    validate.Optional(validate.IsBool),
@@ -1568,14 +1688,10 @@ func (d *truenas) ValidateVolume(vol Volume, removeUnknownKeys bool) error {
 	commonRules := d.commonVolumeRules()
 
 	// Disallow block.* settings for regular custom block volumes. These settings only make sense
-	// when using custom filesystem volumes with block mode enabled. Incus will create the filesystem
-	// for these volumes, and use the mount options. When attaching a regular block volumes to a VM,
+	// when using custom filesystem volumes. Incus will create the filesystem
+	// for these volumes, and use the mount options. When attaching a regular block volume to a VM,
 	// these are not mounted by Incus and therefore don't need these config keys.
 	if vol.IsVMBlock() || vol.volType == VolumeTypeCustom && vol.contentType == ContentTypeBlock {
-		delete(commonRules, "zfs.block_mode")
-		delete(commonRules, "block.filesystem")
-		delete(commonRules, "block.mount_options")
-	} else if vol.volType == VolumeTypeCustom && !vol.IsBlockBacked() {
 		delete(commonRules, "block.filesystem")
 		delete(commonRules, "block.mount_options")
 	}
@@ -1584,45 +1700,45 @@ func (d *truenas) ValidateVolume(vol Volume, removeUnknownKeys bool) error {
 }
 
 // // UpdateVolume applies config changes to the volume.
-// func (d *truenas) UpdateVolume(vol Volume, changedConfig map[string]string) error {
-// 	// Mangle the current volume to its old values.
-// 	old := make(map[string]string)
-// 	for k, v := range changedConfig {
-// 		if k == "size" || k == "zfs.use_refquota" || k == "zfs.reserve_space" {
-// 			old[k] = vol.config[k]
-// 			vol.config[k] = v
-// 		}
+func (d *truenas) UpdateVolume(vol Volume, changedConfig map[string]string) error {
+	// Mangle the current volume to its old values.
+	old := make(map[string]string)
+	for k, v := range changedConfig {
+		if k == "size" || k == "zfs.use_refquota" || k == "zfs.reserve_space" {
+			old[k] = vol.config[k]
+			vol.config[k] = v
+		}
 
-// 		if k == "zfs.blocksize" {
-// 			// Convert to bytes.
-// 			sizeBytes, err := units.ParseByteSizeString(v)
-// 			if err != nil {
-// 				return err
-// 			}
+		if k == "zfs.blocksize" {
+			// Convert to bytes.
+			sizeBytes, err := units.ParseByteSizeString(v)
+			if err != nil {
+				return err
+			}
 
-// 			err = d.setBlocksize(vol, sizeBytes)
-// 			if err != nil {
-// 				return err
-// 			}
-// 		}
-// 	}
+			err = d.setBlocksize(vol, sizeBytes)
+			if err != nil {
+				return err
+			}
+		}
+	}
 
-// 	defer func() {
-// 		for k, v := range old {
-// 			vol.config[k] = v
-// 		}
-// 	}()
+	defer func() {
+		for k, v := range old {
+			vol.config[k] = v
+		}
+	}()
 
-// 	// If any of the relevant keys changed, re-apply the quota.
-// 	if len(old) != 0 {
-// 		err := d.SetVolumeQuota(vol, vol.ExpandedConfig("size"), false, nil)
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
+	// If any of the relevant keys changed, re-apply the quota.
+	if len(old) != 0 {
+		err := d.SetVolumeQuota(vol, vol.ExpandedConfig("size"), false, nil)
+		if err != nil {
+			return err
+		}
+	}
 
-// 	return nil
-// }
+	return nil
+}
 
 // // GetVolumeUsage returns the disk space used by the volume.
 // func (d *zfs) GetVolumeUsage(vol Volume) (int64, error) {
@@ -1735,7 +1851,7 @@ func (d *truenas) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 // se: from driver_dir_volumes.go
 // GetVolumeDiskPath returns the location of a disk volume.
 func (d *truenas) GetVolumeDiskPath(vol Volume) (string, error) {
-	return genericVFSGetVolumeDiskPath(vol)
+	return filepath.Join(vol.MountPath(), genericVolumeDiskFile), nil
 }
 
 // ListVolumes returns a list of volumes in storage pool.
@@ -1839,6 +1955,120 @@ func (d *truenas) ListVolumes() ([]Volume, error) {
 	return volList, nil
 }
 
+func (d *truenas) activateAndMountFsImg(vol Volume, op *operations.Operation) error {
+
+	revert := revert.New()
+	defer revert.Fail()
+
+	// mount underlying dataset, then loop mount the root.img
+	fsImgVol := cloneVolAsFsImgVol(vol)
+
+	err := d.MountVolume(fsImgVol, op)
+	if err != nil {
+		return err
+	}
+	revert.Add(func() {
+		_, _ = d.UnmountVolume(fsImgVol, false, op)
+	})
+
+	// We expect the filler to copy the VM image into this path.
+	rootBlockPath, err := d.GetVolumeDiskPath(fsImgVol)
+	if err != nil {
+		return err
+	}
+
+	fsType, err := fsProbe(rootBlockPath)
+	if err != nil {
+		return fmt.Errorf("Failed probing filesystem: %w", err)
+	}
+	if fsType == "" {
+		// if we couln't probe it, we probably can't mount it, but may as well give it a whirl
+		fsType = vol.ConfigBlockFilesystem()
+	}
+
+	loopDevPath, err := loopDeviceSetup(rootBlockPath)
+	if err != nil {
+		return err
+	}
+	revert.Add(func() {
+		loopDeviceAutoDetach(loopDevPath)
+	})
+
+	mountPath := vol.MountPath()
+
+	//var volOptions []string
+	volOptions := strings.Split(vol.ConfigBlockMountOptions(), ",")
+
+	mountFlags, mountOptions := linux.ResolveMountOptions(volOptions)
+	_ = mountFlags
+	err = TryMount(loopDevPath, mountPath, fsType, mountFlags, mountOptions)
+	if err != nil {
+		defer func() { _ = loopDeviceAutoDetach(loopDevPath) }()
+		return err
+	}
+	d.logger.Debug("Mounted TrueNAS volume", logger.Ctx{"volName": vol.name, "dev": rootBlockPath, "path": mountPath, "options": mountOptions})
+
+	revert.Success()
+
+	return nil
+}
+
+func (d *truenas) mountNfsDataset(vol Volume) error {
+
+	err := vol.EnsureMountPath()
+	if err != nil {
+		return err
+	}
+
+	dataset := d.dataset(vol, false)
+
+	var volOptions []string
+
+	//note: to implement getDatasetProperties, we'd like `truenas-admin dataset inspect` to be implemented
+	atime, _ := d.getDatasetProperty(dataset, "atime")
+	if atime == "off" {
+		volOptions = append(volOptions, "noatime")
+	}
+
+	host := d.config["truenas.host"]
+	if host == "" {
+		return fmt.Errorf("`truenas.host` must be specified")
+	}
+
+	ip4and6, err := net.LookupIP(host)
+	if err != nil {
+		return err
+	}
+
+	// NFS
+	volOptions = append(volOptions, "vers=4.2")                  // TODO: decide on default options
+	volOptions = append(volOptions, "addr="+ip4and6[0].String()) // TODO: pick ip4 or ip6
+
+	mountFlags, mountOptions := linux.ResolveMountOptions(volOptions)
+	mountPath := vol.MountPath()
+
+	remotePath := fmt.Sprintf("%s:/mnt/%s", host, dataset)
+
+	// Mount the dataset.
+	err = TryMount(remotePath, mountPath, "nfs", mountFlags, mountOptions) // TODO: if local we want to bind mount.
+
+	if err != nil {
+		// try once more, after re-creating the share.
+		err = d.createNfsShare(dataset)
+		if err != nil {
+			return err
+		}
+		err = TryMount(remotePath, mountPath, "nfs", mountFlags, mountOptions)
+		if err != nil {
+			return err
+		}
+	}
+
+	d.logger.Debug("Mounted TrueNAS dataset", logger.Ctx{"volName": vol.name, "host": host, "dev": dataset, "path": mountPath})
+
+	return nil
+}
+
 // MountVolume mounts a volume and increments ref counter. Please call UnmountVolume() when done with the volume.
 func (d *truenas) MountVolume(vol Volume, op *operations.Operation) error {
 	unlock, err := vol.MountLock()
@@ -1851,95 +2081,87 @@ func (d *truenas) MountVolume(vol Volume, op *operations.Operation) error {
 	revert := revert.New()
 	defer revert.Fail()
 
-	dataset := d.dataset(vol, false)
-	mountPath := vol.MountPath()
+	if vol.contentType == ContentTypeFS || isFsImgVol(vol) {
 
-	// Check if filesystem volume already mounted.
-	if vol.contentType == ContentTypeFS {
+		// handle an FS mount
+
+		mountPath := vol.MountPath()
 		if !linux.IsMountPoint(mountPath) {
 
-			//if !vol.MountInUse() {
-			/*
-				we haven't mounted yet, so update/create the share
+			if needsFsImgVol(vol) {
 
-				createNfsShare is optimized to only create the share if it doesn't already exists. This does involve
-				checking for a share, but it means that we don't have to take time creating the share when we are
-				setting up the volume, when the source instance may be frozen. Also, if someone were to delete the
-				share off the server, or if we change our default settings, this will recreate/update as a side-effect
-			*/
-			// err = d.createNfsShare(dataset)
-			// if err != nil {
-			// 	return err
-			// }
-			//}
-
-			err = vol.EnsureMountPath()
-			if err != nil {
-				return err
-			}
-
-			var volOptions []string
-
-			//note: to implement getDatasetProperties, we'd like `truenas-admin dataset inspect` to be implemented
-			atime, _ := d.getDatasetProperty(dataset, "atime")
-			if atime == "off" {
-				volOptions = append(volOptions, "noatime")
-			}
-
-			host := d.config["truenas.host"]
-			if host == "" {
-				return fmt.Errorf("`truenas.host` must be specified")
-			}
-
-			ip4and6, err := net.LookupIP(host)
-			if err != nil {
-				return err
-			}
-
-			// NFS
-			volOptions = append(volOptions, "vers=4.2")                  // TODO: decide on default options
-			volOptions = append(volOptions, "addr="+ip4and6[0].String()) // TODO: pick ip4 or ip6
-
-			mountFlags, mountOptions := linux.ResolveMountOptions(volOptions)
-
-			remotePath := fmt.Sprintf("%s:/mnt/%s", host, dataset)
-
-			// Mount the dataset.
-			err = TryMount(remotePath, mountPath, "nfs", mountFlags, mountOptions) // TODO: if local we want to bind mount.
-
-			if err != nil {
-				// try once more, after re-creating the share.
-				err = d.createNfsShare(dataset)
+				// mount underlying fs, then create a loop device for the fs-img, and mount that
+				err = d.activateAndMountFsImg(vol, op)
 				if err != nil {
 					return err
 				}
-				err = TryMount(remotePath, mountPath, "nfs", mountFlags, mountOptions)
+
+			} else {
+
+				// otherwise, we can just NFS mount a dataset
+				err = d.mountNfsDataset(vol)
 				if err != nil {
 					return err
 				}
 			}
-
-			_ = mountFlags
-			_ = mountOptions
-
-			d.logger.Debug("Mounted TrueNAS dataset", logger.Ctx{"volName": vol.name, "host": host, "dev": dataset, "path": mountPath})
 		}
+
 	} else if vol.contentType == ContentTypeBlock || vol.contentType == ContentTypeISO {
-		// For VMs, mount the filesystem volume.
-		// this essentially has the effect of double-mounting the FS volume when we are mounting the block device. This prevents
-		// the FS volume being unmounted prematurely.
-		//if vol.IsVMBlock() {
-		fsVol := vol.NewVMBlockFilesystemVolume()
-		err = d.MountVolume(fsVol, op)
-		if err != nil {
-			return err
-		}
-		//}
+		/*
+			Like the spoon, there is no block volume.
+
+			For VMs, mount the filesystem volume. This essentially has the effect of double-mounting the FS volume
+			when we are mounting the block device. This prevents the FS volume being unmounted prematurely.
+
+			Its important to mount the block volume and then its underlying "config" filesystem volume because
+			vol.NewVMBlockFilesystemVolume is used to to mount the VM's config without necessarily mounting the "block" volume,
+			and if we don't explicitly mount it, then MountTask will blindly unmount our block volume.
+		*/
+		if vol.IsVMBlock() {
+			fsVol := vol.NewVMBlockFilesystemVolume()
+			fsVol.config["volatile.truenas.fs-img"] = "true" // bit of a hack to get the fs-mounter to mount it instead of loop it.
+			err = d.MountVolume(fsVol, op)
+			if err != nil {
+				return err
+			}
+		} // PS: not 100% sure what to do about ISOs yet.
 	}
 
 	vol.MountRefCountIncrement() // From here on it is up to caller to call UnmountVolume() when done.
 	revert.Success()
 	return nil
+}
+
+func (d *truenas) deactivateVolume(vol Volume, op *operations.Operation) (bool, error) {
+	ourUnmount := true
+
+	// need to unlink the loop
+	// mount underlying dataset, then loop mount the root.img
+	// we need to mount the underlying dataset
+	fsImgVol := cloneVolAsFsImgVol(vol)
+
+	// We expect the filler to copy the VM image into this path.
+	rootBlockPath, err := d.GetVolumeDiskPath(fsImgVol)
+	if err != nil {
+		return false, err
+	}
+	loopDevPath, err := loopDeviceSetup(rootBlockPath)
+	if err != nil {
+		return false, err
+	}
+	err = loopDeviceAutoDetach(loopDevPath)
+	if err != nil {
+		return false, err
+	}
+
+	// and then unmount the root.img dataset
+
+	_, err = d.UnmountVolume(fsImgVol, false, op)
+	if err != nil {
+		return false, err
+	}
+
+	return ourUnmount, nil
 }
 
 // UnmountVolume unmounts volume if mounted and not in use. Returns true if this unmounted the volume.
@@ -1958,30 +2180,51 @@ func (d *truenas) UnmountVolume(vol Volume, keepBlockDev bool, op *operations.Op
 
 	refCount := vol.MountRefCountDecrement()
 
-	if vol.contentType == ContentTypeFS && linux.IsMountPoint(mountPath) {
-		if refCount > 0 {
-			d.logger.Debug("Skipping unmount as in use", logger.Ctx{"volName": vol.name, "refCount": refCount})
-			return false, ErrInUse
-		}
+	if refCount > 0 {
+		d.logger.Debug("Skipping unmount as in use", logger.Ctx{"volName": vol.name, "refCount": refCount})
+		return false, ErrInUse
+	}
+
+	if keepBlockDev {
+		d.logger.Debug("keepBlockDevTrue", logger.Ctx{"volName": vol.name, "refCount": refCount})
+	}
+
+	if (vol.contentType == ContentTypeFS || isFsImgVol(vol)) && linux.IsMountPoint(mountPath) {
 
 		// Unmount the dataset.
 		err = TryUnmount(mountPath, 0)
 		if err != nil {
 			return false, err
 		}
-
-		d.logger.Debug("Unmounted TrueNAS dataset", logger.Ctx{"volName": vol.name, "host": d.config["truenas.host"], "dataset": dataset, "path": mountPath})
-
 		ourUnmount = true
+
+		// if we're a loop mounted volume...
+		if needsFsImgVol(vol) {
+
+			// then we've unmounted the volume
+
+			d.logger.Debug("Unmounted TrueNAS volume", logger.Ctx{"volName": vol.name, "host": d.config["truenas.host"], "dataset": dataset, "path": mountPath})
+
+			// now we can take down the loop and the fs-img dataset
+			_, err = d.deactivateVolume(vol, op)
+			if err != nil {
+				return false, err
+			}
+
+		} else {
+			// otherwise, we're just a regular dataset mount.
+			d.logger.Debug("Unmounted TrueNAS dataset", logger.Ctx{"volName": vol.name, "host": d.config["truenas.host"], "dataset": dataset, "path": mountPath})
+		}
+
 	} else if vol.contentType == ContentTypeBlock || vol.contentType == ContentTypeISO {
 		// For VMs and ISOs, unmount the filesystem volume.
-		//if vol.IsVMBlock() {
-		fsVol := vol.NewVMBlockFilesystemVolume()
-		ourUnmount, err = d.UnmountVolume(fsVol, false, op)
-		if err != nil {
-			return false, err
+		if vol.IsVMBlock() {
+			fsVol := vol.NewVMBlockFilesystemVolume()
+			ourUnmount, err = d.UnmountVolume(fsVol, false, op)
+			if err != nil {
+				return false, err
+			}
 		}
-		//}
 	}
 
 	return ourUnmount, nil
@@ -2514,8 +2757,7 @@ func (d *truenas) CreateVolumeSnapshot(vol Volume, op *operations.Operation) err
 
 	// Make the snapshot.
 	dataset := d.dataset(vol, false)
-	out, err := d.runTool("snapshot", "create", "-r", dataset)
-	_ = out
+	err = d.createSnapshot(dataset, false)
 	if err != nil {
 		return err
 	}
@@ -2901,28 +3143,36 @@ func (d *truenas) RenameVolumeSnapshot(vol Volume, newSnapshotName string, op *o
 
 // FillVolumeConfig populate volume with default config.
 func (d *truenas) FillVolumeConfig(vol Volume) error {
+
 	var excludedKeys []string
 
 	// Copy volume.* configuration options from pool.
 	// If vol has a source, ignore the block mode related config keys from the pool.
 	if vol.hasSource || vol.IsVMBlock() || vol.volType == VolumeTypeCustom && vol.contentType == ContentTypeBlock {
-		excludedKeys = []string{"zfs.block_mode", "block.filesystem", "block.mount_options"}
+		excludedKeys = []string{"truenas.block_mode", "block.filesystem", "block.mount_options"}
 	} else if vol.volType == VolumeTypeCustom && !vol.IsBlockBacked() {
 		excludedKeys = []string{"block.filesystem", "block.mount_options"}
 	}
 
+	// Copy volume.* configuration options from pool.
+	// Exclude 'block.filesystem' and 'block.mount_options'
+	// as this ones are handled below in this function and depends from volume type
 	err := d.fillVolumeConfig(&vol, excludedKeys...)
 	if err != nil {
 		return err
 	}
 
-	// Only validate filesystem config keys for filesystem volumes.
-	if d.isBlockBacked(vol) && vol.ContentType() == ContentTypeFS {
-		// Inherit block mode from pool if not set.
-		if vol.config["zfs.block_mode"] == "" {
-			vol.config["zfs.block_mode"] = d.config["volume.zfs.block_mode"]
-		}
+	// Only validate filesystem config keys for filesystem volumes or VM block volumes (which have an
+	// associated filesystem volume).
 
+	if vol.ContentType() == ContentTypeFS {
+		//we default block_mode to true...
+		if vol.config["truenas.block_mode"] == "" {
+			//vol.config["truenas.block_mode"] = "true"
+		}
+	}
+
+	if vol.ContentType() == ContentTypeFS /*|| vol.IsVMBlock()*/ {
 		// Inherit filesystem from pool if not set.
 		if vol.config["block.filesystem"] == "" {
 			vol.config["block.filesystem"] = d.config["volume.block.filesystem"]
@@ -2950,5 +3200,6 @@ func (d *truenas) FillVolumeConfig(vol Volume) error {
 }
 
 func (d *truenas) isBlockBacked(vol Volume) bool {
-	return util.IsTrue(vol.Config()["zfs.block_mode"])
+	//return util.IsTrue(vol.Config()["truenas.block_mode"])
+	return vol.contentType == ContentTypeFS && vol.config["block.filesystem"] != ""
 }
