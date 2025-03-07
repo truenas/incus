@@ -14,7 +14,7 @@ import (
 
 const (
 	tnToolName              = "truenas_incus_ctl"
-	tnMinVersion            = "0.3.0" // bulk api
+	tnMinVersion            = "0.4.0" // replication start
 	tnVerifyDatasetCreation = false   // explicitly check that the dataset is created, work around for bugs in certain versions of the tool.
 )
 
@@ -32,11 +32,11 @@ func (d *truenas) dataset(vol Volume, deleted bool) string {
 		name = fmt.Sprintf("%s_%s", name, vol.ConfigBlockFilesystem())
 	}
 
-	// if (vol.volType == VolumeTypeVM || vol.volType == VolumeTypeImage) && vol.contentType == ContentTypeBlock {
-	// 	name = fmt.Sprintf("%s%s", name, zfsBlockVolSuffix)
-	// } else if vol.volType == VolumeTypeCustom && vol.contentType == ContentTypeISO {
-	// 	name = fmt.Sprintf("%s%s", name, zfsISOVolSuffix)
-	// }
+	if (vol.volType == VolumeTypeVM || vol.volType == VolumeTypeImage) && vol.contentType == ContentTypeBlock {
+		name = fmt.Sprintf("%s%s", name, zfsBlockVolSuffix)
+	} else if vol.volType == VolumeTypeCustom && vol.contentType == ContentTypeISO {
+		name = fmt.Sprintf("%s%s", name, zfsISOVolSuffix)
+	}
 
 	if snapName != "" {
 		if deleted {
@@ -92,6 +92,25 @@ func optionsToOptionString(options ...string) string {
 	optionString := builder.String()
 
 	return optionString
+}
+
+// zero, or >= 1GiB
+func (d *truenas) setDatasetQuota(dataset string, sizeBytes int64) error {
+
+	if sizeBytes < 0 {
+		return fmt.Errorf("negative quota not allowed: %d", sizeBytes)
+	}
+	if sizeBytes > 0 && sizeBytes < 1073741824 {
+		sizeBytes = 1073741824 // middleware rejects < 1GiB
+	}
+
+	props := []string{fmt.Sprintf("quota=%d", sizeBytes), "refquota=0", "reservation=0", "refreservation=0"}
+
+	err := d.setDatasetProperties(dataset, props...)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (d *truenas) setDatasetProperties(dataset string, options ...string) error {
@@ -202,39 +221,13 @@ func (d *truenas) needsRecursion(dataset string) bool {
 }
 
 func (d *truenas) getDatasets(dataset string, types string) ([]string, error) {
-	/*
-		NOTE: types not fully implemented... yet.
 
-		filesystem OR snapshot OR all should work.
-	*/
-
-	noun := "dataset"
-
-	// TODO: we need to be clever to get combined/datasets+snapshots etc
-	// or add it to truenas-admin...
-	if types == "snapshot" {
-		noun = "snapshot"
-	} else if types == "all" {
-		// ideally, admin=tool takes care of this.
-		datasets, err := d.getDatasets(dataset, "filesystem")
-		if err != nil {
-			return nil, err
-		}
-		snapshots, err := d.getDatasets(dataset, "snapshot")
-		if err != nil {
-			return nil, err
-		}
-		return append(datasets, snapshots...), nil
-
+	// tool does not support "all", but it also supports "nfs"
+	if types == "all" {
+		types = "filesystem,volume,snapshot"
 	}
-	out, err := d.runTool(noun, "list", "-H", "-r", "-o", "name", dataset)
 
-	// if types == "all" {
-	// 	types = "filesystem,volume,snapshot"
-	// }
-
-	//out, err := d.runTool("list", "-H", "-r", "-o", "name", "-t", types, dataset)
-
+	out, err := d.runTool("list", "-H", "-r", "-o", "name", "-t", types, dataset)
 	if err != nil {
 		return nil, err
 	}
@@ -312,10 +305,10 @@ func (d *truenas) createDatasets(datasets []string, options ...string) error {
 }
 
 // take a recursive snapshot of dataset@snapname, and optionally delete the old snapshot first
-func (d *truenas) createSnapshot(snapName string, delete bool) error {
+func (d *truenas) createSnapshot(snapName string, deleteFirst bool) error {
 	args := []string{"snapshot", "create", "-r"}
 
-	if delete {
+	if deleteFirst {
 		args = append(args, "--delete")
 	}
 
