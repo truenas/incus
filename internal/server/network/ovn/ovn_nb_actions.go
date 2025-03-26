@@ -108,6 +108,7 @@ type OVNDHCPv4Opts struct {
 	MTU                uint32
 	Netmask            string
 	DNSSearchList      []string
+	StaticRoutes       string
 }
 
 // OVNDHCPv6Opts IPv6 DHCP option set that can be created (and then applied to a switch port by resulting ID).
@@ -1285,6 +1286,12 @@ func (o *NB) UpdateLogicalSwitchDHCPv4Options(ctx context.Context, switchName OV
 
 	if opts.Netmask != "" {
 		dhcpOption.Options["netmask"] = opts.Netmask
+	}
+
+	if opts.StaticRoutes != "" {
+		dhcpOption.Options["classless_static_route"] = fmt.Sprintf("{%s}", opts.StaticRoutes)
+	} else {
+		delete(dhcpOption.Options, "classless_static_route")
 	}
 
 	// Prepare the changes.
@@ -2975,8 +2982,12 @@ func (o *NB) CreateLoadBalancer(ctx context.Context, loadBalancerName OVNLoadBal
 		}
 
 		err := o.get(ctx, &lb)
-		if err == nil {
-			// Delete the load balancer.
+		if err == nil || err == ErrTooMany {
+			// Delete the load balancer (by name in case there are duplicates).
+			lb := ovnNB.LoadBalancer{
+				Name: name,
+			}
+
 			deleteOps, err := o.client.Where(&lb).Delete()
 			if err != nil {
 				return err
@@ -4070,7 +4081,7 @@ func (o *NB) DeleteLogicalRouterPeering(ctx context.Context, opts OVNRouterPeeri
 			}
 
 			// Skip over anything that's not tied to the current port.
-			if route.OutputPort != nil || *route.OutputPort != string(portName) {
+			if route.OutputPort == nil || *route.OutputPort != string(portName) {
 				continue
 			}
 

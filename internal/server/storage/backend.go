@@ -1165,6 +1165,14 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 			}
 		}
 
+		var migrationSnapshots []*migration.Snapshot
+		if snapshots {
+			migrationSnapshots, err = VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, inst.Project().Name, srcPool, contentType, volType, src.Name())
+			if err != nil {
+				return err
+			}
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -1193,7 +1201,7 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 			return b.CreateInstanceFromMigration(inst, bEnd, localMigration.VolumeTargetArgs{
 				IndexHeaderVersion: localMigration.IndexHeaderVersion,
 				Name:               inst.Name(),
-				Snapshots:          snapshotNames,
+				Snapshots:          migrationSnapshots,
 				MigrationType:      migrationTypes[0],
 				VolumeSize:         srcVolumeSize, // Block size setting override.
 				TrackProgress:      false,         // Do not use a progress tracker on receiver.
@@ -1421,6 +1429,14 @@ func (b *backend) RefreshCustomVolume(projectName string, srcProjectName string,
 			}
 		}
 
+		var migrationSnapshots []*migration.Snapshot
+		if snapshots {
+			migrationSnapshots, err = VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, projectName, srcPool, contentType, drivers.VolumeTypeCustom, srcVolName)
+			if err != nil {
+				return err
+			}
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
 
 		// Use in-memory pipe pair to simulate a connection between the sender and receiver.
@@ -1453,7 +1469,7 @@ func (b *backend) RefreshCustomVolume(projectName string, srcProjectName string,
 				Name:               volName,
 				Description:        desc,
 				Config:             config,
-				Snapshots:          snapshotNames,
+				Snapshots:          migrationSnapshots,
 				MigrationType:      migrationTypes[0],
 				TrackProgress:      false, // Do not use a progress tracker on receiver.
 				ContentType:        string(contentType),
@@ -1634,6 +1650,20 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 			return fmt.Errorf("Failed to negotiate copy migration type: %w", err)
 		}
 
+		var srcVolumeSize int64
+		// For VMs, get source volume size so that target can create the volume the same size.
+		if src.Type() == instancetype.VM {
+			srcVolumeSize, err = InstanceDiskBlockSize(srcPool, src, op)
+			if err != nil {
+				return fmt.Errorf("Failed getting source disk size: %w", err)
+			}
+		}
+
+		migrationSnapshots, err := VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, src.Project().Name, srcPool, contentType, volType, src.Name())
+		if err != nil {
+			return err
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -1663,9 +1693,10 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 			return b.CreateInstanceFromMigration(inst, bEnd, localMigration.VolumeTargetArgs{
 				IndexHeaderVersion: localMigration.IndexHeaderVersion,
 				Name:               inst.Name(),
-				Snapshots:          snapshotNames,
+				Snapshots:          migrationSnapshots,
 				MigrationType:      migrationTypes[0],
-				Refresh:            true,  // Indicate to receiver volume should exist.
+				Refresh:            true, // Indicate to receiver volume should exist.
+				VolumeSize:         srcVolumeSize,
 				TrackProgress:      false, // Do not use a progress tracker on receiver.
 				VolumeOnly:         !snapshots,
 			}, op)
@@ -1991,8 +2022,11 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 		}
 	}
 
-	if !isRemoteClusterMove {
-		for i, snapName := range args.Snapshots {
+	// Create new volume database records when the storage pool is changed or
+	// when it is not a remote cluster move.
+	if !isRemoteClusterMove || args.StoragePool != "" {
+		for i, snapshot := range args.Snapshots {
+			snapName := snapshot.GetName()
 			newSnapshotName := drivers.GetSnapshotVolumeName(inst.Name(), snapName)
 			snapConfig := vol.Config()           // Use parent volume config by default.
 			snapDescription := volumeDescription // Use parent volume description by default.
@@ -2719,7 +2753,11 @@ func (b *backend) GetInstanceUsage(inst instance.Instance) (*VolumeUsage, error)
 	}
 
 	sizeStr, ok := rootDiskConf["size"]
-	if ok {
+	if !ok && volType == drivers.VolumeTypeVM {
+		sizeStr = drivers.DefaultBlockSize
+	}
+
+	if sizeStr != "" {
 		total, err := units.ParseByteSizeString(sizeStr)
 		if err != nil {
 			return nil, err
@@ -4809,6 +4847,14 @@ func (b *backend) CreateCustomVolumeFromCopy(projectName string, srcProjectName 
 		}
 	}
 
+	var migrationSnapshots []*migration.Snapshot
+	if snapshots {
+		migrationSnapshots, err = VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, srcProjectName, srcPool, contentType, drivers.VolumeTypeCustom, srcVolName)
+		if err != nil {
+			return err
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Use in-memory pipe pair to simulate a connection between the sender and receiver.
@@ -4842,7 +4888,7 @@ func (b *backend) CreateCustomVolumeFromCopy(projectName string, srcProjectName 
 			Name:               volName,
 			Description:        desc,
 			Config:             config,
-			Snapshots:          snapshotNames,
+			Snapshots:          migrationSnapshots,
 			MigrationType:      migrationTypes[0],
 			TrackProgress:      false, // Do not use a progress tracker on receiver.
 			ContentType:        string(contentType),
@@ -5111,7 +5157,8 @@ func (b *backend) CreateCustomVolumeFromMigration(projectName string, conn io.Re
 
 	if len(args.Snapshots) > 0 {
 		// Create database entries for new storage volume snapshots.
-		for _, snapName := range args.Snapshots {
+		for _, snapshot := range args.Snapshots {
+			snapName := snapshot.GetName()
 			newSnapshotName := drivers.GetSnapshotVolumeName(args.Name, snapName)
 
 			snapConfig := vol.Config() // Use parent volume config by default.

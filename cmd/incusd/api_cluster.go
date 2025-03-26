@@ -79,36 +79,6 @@ var clusterNodeStateCmd = APIEndpoint{
 	Post: APIEndpointAction{Handler: clusterNodeStatePost, AccessHandler: allowPermission(auth.ObjectTypeServer, auth.EntitlementCanEdit)},
 }
 
-var internalClusterAcceptCmd = APIEndpoint{
-	Path: "cluster/accept",
-
-	Post: APIEndpointAction{Handler: internalClusterPostAccept, AccessHandler: allowPermission(auth.ObjectTypeServer, auth.EntitlementCanEdit)},
-}
-
-var internalClusterRebalanceCmd = APIEndpoint{
-	Path: "cluster/rebalance",
-
-	Post: APIEndpointAction{Handler: internalClusterPostRebalance, AccessHandler: allowPermission(auth.ObjectTypeServer, auth.EntitlementCanEdit)},
-}
-
-var internalClusterAssignCmd = APIEndpoint{
-	Path: "cluster/assign",
-
-	Post: APIEndpointAction{Handler: internalClusterPostAssign, AccessHandler: allowPermission(auth.ObjectTypeServer, auth.EntitlementCanEdit)},
-}
-
-var internalClusterHandoverCmd = APIEndpoint{
-	Path: "cluster/handover",
-
-	Post: APIEndpointAction{Handler: internalClusterPostHandover, AccessHandler: allowPermission(auth.ObjectTypeServer, auth.EntitlementCanEdit)},
-}
-
-var internalClusterRaftNodeCmd = APIEndpoint{
-	Path: "cluster/raft-node/{address}",
-
-	Delete: APIEndpointAction{Handler: internalClusterRaftNodeDelete, AccessHandler: allowPermission(auth.ObjectTypeServer, auth.EntitlementCanEdit)},
-}
-
 // swagger:operation GET /1.0/cluster cluster cluster_get
 //
 //	Get the cluster configuration
@@ -547,6 +517,19 @@ func clusterPutJoin(d *Daemon, r *http.Request, req api.ClusterPut) response.Res
 			return err
 		}
 
+		// Get the cluster members
+		members, err := client.GetClusterMembers()
+		if err != nil {
+			return err
+		}
+
+		// Verify if a node with the same name already exists in the cluster.
+		for _, member := range members {
+			if member.ServerName == req.ServerName {
+				return fmt.Errorf("The cluster already has a member with name: %s", req.ServerName)
+			}
+		}
+
 		// As ServerAddress field is required to be set it means that we're using the new join API
 		// introduced with the 'clustering_join' extension.
 		// Connect to ourselves to initialize storage pools and networks using the API.
@@ -978,12 +961,20 @@ func clusterInitMember(d incus.InstanceServer, client incus.InstanceServer, memb
 			continue
 		}
 
+		// We only care about project features at this stage, leave the restrictions and limits for later.
+		features := map[string]string{}
+		for k, v := range p.Config {
+			if strings.HasPrefix(k, "features.") {
+				features[k] = v
+			}
+		}
+
 		// Request that the project be created first before the project specific networks.
 		data.Projects = append(data.Projects, api.ProjectsPost{
 			Name: p.Name,
 			ProjectPut: api.ProjectPut{
 				Description: p.Description,
-				Config:      p.Config,
+				Config:      features,
 			},
 		})
 
@@ -1309,6 +1300,11 @@ func clusterNodesPost(d *Daemon, r *http.Request) response.Response {
 
 		// Filter to online members.
 		for _, member := range members {
+			// Verify if a node with the same name already exists in the cluster.
+			if member.Name == req.ServerName {
+				return fmt.Errorf("The cluster already has a member with name: %s", req.ServerName)
+			}
+
 			if member.State == db.ClusterMemberStateEvacuated || member.IsOffline(s.GlobalConfig.OfflineThreshold()) {
 				continue
 			}

@@ -107,8 +107,12 @@ Pre-defined column shorthand chars:
   s - State`))
 
 	cmd.RunE = c.Run
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultNetworkPeerListColumns, i18n.G("Columns")+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -233,7 +237,7 @@ func (c *cmdNetworkPeerList) Run(cmd *cobra.Command, args []string) error {
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, peers)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, peers)
 }
 
 // Show.
@@ -310,7 +314,8 @@ type cmdNetworkPeerCreate struct {
 	global      *cmdGlobal
 	networkPeer *cmdNetworkPeer
 
-	flagType string
+	flagType        string
+	flagDescription string
 }
 
 func (c *cmdNetworkPeerCreate) Command() *cobra.Command {
@@ -331,6 +336,7 @@ incus network peer create default peer3 web/default < config.yaml
 	cmd.RunE = c.Run
 
 	cmd.Flags().StringVar(&c.flagType, "type", "local", i18n.G("Type of peer (local or remote)")+"``")
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Peer description")+"``")
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -424,6 +430,10 @@ func (c *cmdNetworkPeerCreate) Run(cmd *cobra.Command, args []string) error {
 		peer.TargetNetwork = target
 	} else if c.flagType == "remote" {
 		peer.TargetIntegration = target
+	}
+
+	if c.flagDescription != "" {
+		peer.Description = c.flagDescription
 	}
 
 	client := resource.server

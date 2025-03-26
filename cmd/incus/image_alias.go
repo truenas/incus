@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -56,6 +57,8 @@ type cmdImageAliasCreate struct {
 	global     *cmdGlobal
 	image      *cmdImage
 	imageAlias *cmdImageAlias
+
+	flagDescription string
 }
 
 func (c *cmdImageAliasCreate) Command() *cobra.Command {
@@ -65,7 +68,26 @@ func (c *cmdImageAliasCreate) Command() *cobra.Command {
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Create aliases for existing images`))
 
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Image alias description")+"``")
+
 	cmd.RunE = c.Run
+
+	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) > 1 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		if len(args) == 0 {
+			return c.global.cmpRemotes(toComplete, true)
+		}
+
+		remote, _, found := strings.Cut(args[0], ":")
+		if !found {
+			remote = ""
+		}
+
+		return c.global.cmpImageFingerprintsFromRemote(toComplete, remote)
+	}
 
 	return cmd
 }
@@ -93,6 +115,7 @@ func (c *cmdImageAliasCreate) Run(cmd *cobra.Command, args []string) error {
 	alias := api.ImageAliasesPost{}
 	alias.Name = resource.name
 	alias.Target = args[1]
+	alias.Description = c.flagDescription
 
 	return resource.server.CreateImageAlias(alias)
 }
@@ -113,6 +136,14 @@ func (c *cmdImageAliasDelete) Command() *cobra.Command {
 		`Delete image aliases`))
 
 	cmd.RunE = c.Run
+
+	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		return c.global.cmpImages(toComplete)
+	}
 
 	return cmd
 }
@@ -176,10 +207,22 @@ Pre-defined column shorthand chars:
   f - Fingerprint
   t - Type
   d - Description`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultImageAliasColumns, i18n.G("Columns")+"``")
 
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
+
 	cmd.RunE = c.Run
+
+	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		return c.global.cmpRemotes(toComplete, true)
+	}
 
 	return cmd
 }
@@ -316,7 +359,7 @@ func (c *cmdImageAliasList) Run(cmd *cobra.Command, args []string) error {
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, aliases)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, aliases)
 }
 
 // Rename.
@@ -335,6 +378,14 @@ func (c *cmdImageAliasRename) Command() *cobra.Command {
 		`Rename aliases`))
 
 	cmd.RunE = c.Run
+
+	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+
+		return c.global.cmpImages(toComplete)
+	}
 
 	return cmd
 }

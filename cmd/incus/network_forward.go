@@ -111,8 +111,12 @@ p - Port
 L - Location of the network zone (e.g. its cluster member)`))
 
 	cmd.RunE = c.Run
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultNetworkForwardColumns, i18n.G("Columns")+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -232,7 +236,7 @@ func (c *cmdNetworkForwardList) Run(cmd *cobra.Command, args []string) error {
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, forwards)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, forwards)
 }
 
 // Show.
@@ -315,6 +319,8 @@ func (c *cmdNetworkForwardShow) Run(cmd *cobra.Command, args []string) error {
 type cmdNetworkForwardCreate struct {
 	global         *cmdGlobal
 	networkForward *cmdNetworkForward
+
+	flagDescription string
 }
 
 func (c *cmdNetworkForwardCreate) Command() *cobra.Command {
@@ -330,6 +336,7 @@ incus network forward create n1 127.0.0.1 < config.yaml
 	cmd.RunE = c.Run
 
 	cmd.Flags().StringVar(&c.networkForward.flagTarget, "target", "", i18n.G("Cluster member name")+"``")
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Network forward description")+"``")
 
 	return cmd
 }
@@ -389,6 +396,10 @@ func (c *cmdNetworkForwardCreate) Run(cmd *cobra.Command, args []string) error {
 	forward := api.NetworkForwardsPost{
 		ListenAddress:     args[1],
 		NetworkForwardPut: forwardPut,
+	}
+
+	if c.flagDescription != "" {
+		forward.Description = c.flagDescription
 	}
 
 	forward.Normalise()
@@ -888,6 +899,7 @@ type cmdNetworkForwardPort struct {
 	global          *cmdGlobal
 	networkForward  *cmdNetworkForward
 	flagRemoveForce bool
+	flagDescription string
 }
 
 func (c *cmdNetworkForwardPort) Command() *cobra.Command {
@@ -913,6 +925,7 @@ func (c *cmdNetworkForwardPort) CommandAdd() *cobra.Command {
 	cmd.RunE = c.RunAdd
 
 	cmd.Flags().StringVar(&c.networkForward.flagTarget, "target", "", i18n.G("Cluster member name")+"``")
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Port description")+"``")
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -973,6 +986,7 @@ func (c *cmdNetworkForwardPort) RunAdd(cmd *cobra.Command, args []string) error 
 		Protocol:      args[2],
 		ListenPort:    args[3],
 		TargetAddress: args[4],
+		Description:   c.flagDescription,
 	}
 
 	if len(args) > 5 {

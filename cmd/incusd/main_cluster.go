@@ -28,10 +28,31 @@ import (
 	"github.com/lxc/incus/v6/shared/termios"
 )
 
+type cmdAdmin struct {
+	global *cmdGlobal
+}
+
+// Command returns a cobra command for inclusion.
+func (c *cmdAdmin) Command() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Hidden = true
+	cmd.Use = "admin"
+
+	// Cluster
+	clusterCmd := cmdCluster{global: c.global}
+	cmd.AddCommand(clusterCmd.Command())
+
+	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
+	cmd.Args = cobra.NoArgs
+	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }
+	return cmd
+}
+
 type cmdCluster struct {
 	global *cmdGlobal
 }
 
+// Command returns a cobra command for inclusion.
 func (c *cmdCluster) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = "cluster"
@@ -343,7 +364,11 @@ func (c *cmdClusterListDatabase) Command() *cobra.Command {
 	cmd.Use = "list-database"
 	cmd.Aliases = []string{"ls"}
 	cmd.Short = "Print the addresses of the cluster members serving the database"
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", "Format (csv|json|table|yaml|compact)")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", `Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)
+
+	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.RunE = c.Run
 
@@ -351,14 +376,14 @@ func (c *cmdClusterListDatabase) Command() *cobra.Command {
 }
 
 func (c *cmdClusterListDatabase) Run(cmd *cobra.Command, args []string) error {
-	os := sys.DefaultOS()
+	defaultOS := sys.DefaultOS()
 
-	db, err := db.OpenNode(filepath.Join(os.VarDir, "database"), nil)
+	dbconn, err := db.OpenNode(filepath.Join(defaultOS.VarDir, "database"), nil)
 	if err != nil {
 		return fmt.Errorf("Failed to open local database: %w", err)
 	}
 
-	addresses, err := cluster.ListDatabaseNodes(db)
+	addresses, err := cluster.ListDatabaseNodes(dbconn)
 	if err != nil {
 		return fmt.Errorf("Failed to get database nodes: %w", err)
 	}
@@ -369,7 +394,7 @@ func (c *cmdClusterListDatabase) Run(cmd *cobra.Command, args []string) error {
 		data[i] = []string{address}
 	}
 
-	_ = cli.RenderTable(c.flagFormat, columns, data, nil)
+	_ = cli.RenderTable(os.Stdout, c.flagFormat, columns, data, nil)
 
 	return nil
 }
@@ -546,7 +571,7 @@ func textEditor(inPath string, inContent []byte) ([]byte, error) {
 			_ = os.Remove(f.Name())
 		})
 
-		err = os.Chmod(f.Name(), 0600)
+		err = os.Chmod(f.Name(), 0o600)
 		if err != nil {
 			return []byte{}, err
 		}

@@ -179,6 +179,8 @@ func (c *cmdTop) Run(cmd *cobra.Command, args []string) error {
 
 	if !c.flagAllProjects {
 		d = d.UseProject(info.Project)
+	} else {
+		d = d.UseProject("")
 	}
 
 	// If clustered, get a list of targets.
@@ -435,7 +437,7 @@ func (c *cmdTop) updateDisplay(d incus.InstanceServer, refreshInterval time.Dura
 	}
 
 	fmt.Print("\033[H\033[2J") // Clear the terminal on each tick
-	err = cli.RenderTable(c.flagFormat, headers, dataFormatted, nil)
+	err = cli.RenderTable(os.Stdout, c.flagFormat, headers, dataFormatted, nil)
 	if err != nil {
 		return err
 	}
@@ -490,6 +492,10 @@ func (ms *metricSet) getMetricValue(metricType metricType, instanceName string) 
 	if samples, exists := ms.set[metricType]; exists { // Check if metricType exists
 		for _, sample := range samples {
 			if (metricType == filesystemFreeBytes || metricType == filesystemSizeBytes) && sample.labels["mountpoint"] != "/" {
+				continue
+			}
+
+			if metricType == cpuSecondsTotal && sample.labels["mode"] == "idle" {
 				continue
 			}
 

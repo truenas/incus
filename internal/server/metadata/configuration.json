@@ -645,6 +645,14 @@
 						}
 					},
 					{
+						"environment.*": {
+							"liveupdate": "yes",
+							"longdesc": "Extra environment variables to set on boot and during exec.",
+							"shortdesc": "Free-form environment key/value",
+							"type": "string"
+						}
+					},
+					{
 						"linux.kernel_modules": {
 							"condition": "container",
 							"liveupdate": "yes",
@@ -659,6 +667,14 @@
 							"liveupdate": "no",
 							"longdesc": "",
 							"shortdesc": "Override for the corresponding `sysctl` setting in the container",
+							"type": "string"
+						}
+					},
+					{
+						"smbios11.*": {
+							"liveupdate": "yes",
+							"longdesc": "`SMBIOS Type 11` configuration keys.",
+							"shortdesc": "Free-form `SMBIOS Type 11` key/value",
 							"type": "string"
 						}
 					},
@@ -1022,6 +1038,16 @@
 						}
 					},
 					{
+						"security.iommu": {
+							"condition": "virtual machine",
+							"defaultdesc": "`false`",
+							"liveupdate": "no",
+							"longdesc": "",
+							"shortdesc": "Whether to enable virtual IOMMU, useful for device passthrough and nesting",
+							"type": "bool"
+						}
+					},
+					{
 						"security.nesting": {
 							"condition": "container",
 							"defaultdesc": "`false`",
@@ -1066,7 +1092,7 @@
 							"defaultdesc": "`true`",
 							"liveupdate": "no",
 							"longdesc": "When disabling this option, consider enabling {config:option}`instance-security:security.csm`.",
-							"shortdesc": "Whether UEFI secure boot is enabled with the default Microsoft keys",
+							"shortdesc": "Whether UEFI secure boot is enforced with the default Microsoft keys",
 							"type": "bool"
 						}
 					},
@@ -1217,7 +1243,7 @@
 						}
 					},
 					{
-						"security.syscalls.intercept.sched_setcheduler": {
+						"security.syscalls.intercept.sched_setscheduler": {
 							"condition": "container",
 							"defaultdesc": "`false`",
 							"liveupdate": "no",
@@ -2263,6 +2289,15 @@
 						}
 					},
 					{
+						"acme.challenge": {
+							"defaultdesc": "`HTTP-01`",
+							"longdesc": "Possible values are `DNS-01` and `HTTP-01`.",
+							"scope": "global",
+							"shortdesc": "ACME challenge type to use",
+							"type": "string"
+						}
+					},
+					{
 						"acme.domain": {
 							"longdesc": "",
 							"scope": "global",
@@ -2275,6 +2310,33 @@
 							"longdesc": "",
 							"scope": "global",
 							"shortdesc": "Email address used for the account registration",
+							"type": "string"
+						}
+					},
+					{
+						"acme.provider": {
+							"defaultdesc": "``",
+							"longdesc": "",
+							"scope": "global",
+							"shortdesc": "Backend provider for the challenge (used by DNS-01)",
+							"type": "string"
+						}
+					},
+					{
+						"acme.provider.environment": {
+							"defaultdesc": "``",
+							"longdesc": "",
+							"scope": "global",
+							"shortdesc": "Environment variables to set during the challenge (used by DNS-01)",
+							"type": "string"
+						}
+					},
+					{
+						"acme.provider.resolvers": {
+							"defaultdesc": "``",
+							"longdesc": "DNS resolvers to use for performing (recursive) `CNAME` resolving and apex domain determination during DNS-01 challenge.",
+							"scope": "global",
+							"shortdesc": "Comma-separated list of DNS resolvers (used by DNS-01)",
 							"type": "string"
 						}
 					}
@@ -2680,6 +2742,14 @@
 			},
 			"miscellaneous": {
 				"keys": [
+					{
+						"authorization.scriptlet": {
+							"longdesc": "When using scriptlet-based authorization, this option stores the scriptlet.",
+							"scope": "global",
+							"shortdesc": "Authorization scriptlet",
+							"type": "string"
+						}
+					},
 					{
 						"backups.compression_algorithm": {
 							"defaultdesc": "`gzip`",

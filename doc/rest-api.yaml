@@ -1254,7 +1254,7 @@ definitions:
                 description: Profiles to add
                 example: '"default" profile with a root disk device'
                 items:
-                    $ref: '#/definitions/ProfilesPost'
+                    $ref: '#/definitions/InitProfileProjectPost'
                 type: array
                 x-go-name: Profiles
             projects:
@@ -1271,6 +1271,13 @@ definitions:
                     $ref: '#/definitions/StoragePoolsPost'
                 type: array
                 x-go-name: StoragePools
+            storage_volumes:
+                description: Storage Volumes to add
+                example: local dir storage volume
+                items:
+                    $ref: '#/definitions/InitStorageVolumesProjectPost'
+                type: array
+                x-go-name: StorageVolumes
         title: InitLocalPreseed represents initialization configuration.
         type: object
         x-go-package: github.com/lxc/incus/v6/shared/api
@@ -1315,6 +1322,100 @@ definitions:
             cluster:
                 $ref: '#/definitions/InitClusterPreseed'
         title: InitPreseed represents initialization configuration that can be supplied to `init`.
+        type: object
+        x-go-package: github.com/lxc/incus/v6/shared/api
+    InitProfileProjectPost:
+        properties:
+            Project:
+                description: Project in which the profile will reside
+                example: '"default"'
+                type: string
+            config:
+                additionalProperties:
+                    type: string
+                description: Instance configuration map (refer to doc/instances.md)
+                example:
+                    limits.cpu: "4"
+                    limits.memory: 4GiB
+                type: object
+                x-go-name: Config
+            description:
+                description: Description of the profile
+                example: Medium size instances
+                type: string
+                x-go-name: Description
+            devices:
+                additionalProperties:
+                    additionalProperties:
+                        type: string
+                    type: object
+                description: List of devices
+                example:
+                    eth0:
+                        name: eth0
+                        network: mybr0
+                        type: nic
+                    root:
+                        path: /
+                        pool: default
+                        type: disk
+                type: object
+                x-go-name: Devices
+            name:
+                description: The name of the new profile
+                example: foo
+                type: string
+                x-go-name: Name
+        title: InitProfileProjectPost represents the fields of a new profile along with its associated project.
+        type: object
+        x-go-package: github.com/lxc/incus/v6/shared/api
+    InitStorageVolumesProjectPost:
+        properties:
+            Pool:
+                description: Storage pool in which the volume will reside
+                example: '"default"'
+                type: string
+            Project:
+                description: Project in which the volume will reside
+                example: '"default"'
+                type: string
+            config:
+                additionalProperties:
+                    type: string
+                description: Storage volume configuration map (refer to doc/storage.md)
+                example:
+                    size: 50GiB
+                    zfs.remove_snapshots: "true"
+                type: object
+                x-go-name: Config
+            content_type:
+                description: Volume content type (filesystem or block)
+                example: filesystem
+                type: string
+                x-go-name: ContentType
+            description:
+                description: Description of the storage volume
+                example: My custom volume
+                type: string
+                x-go-name: Description
+            name:
+                description: Volume name
+                example: foo
+                type: string
+                x-go-name: Name
+            restore:
+                description: Name of a snapshot to restore
+                example: snap0
+                type: string
+                x-go-name: Restore
+            source:
+                $ref: '#/definitions/StorageVolumeSource'
+            type:
+                description: Volume type (container, custom, image or virtual-machine)
+                example: custom
+                type: string
+                x-go-name: Type
+        title: InitStorageVolumesProjectPost represents the fields of a new storage volume along with its associated pool.
         type: object
         x-go-package: github.com/lxc/incus/v6/shared/api
     Instance:
@@ -1511,6 +1612,11 @@ definitions:
         x-go-package: github.com/lxc/incus/v6/shared/api
     InstanceConsolePost:
         properties:
+            force:
+                description: Forces a connection to the console
+                example: true
+                type: boolean
+                x-go-name: Force
             height:
                 description: Console height in rows (console type only)
                 example: 24
@@ -3674,6 +3780,16 @@ definitions:
                 example: incus-net1-lr
                 type: string
                 x-go-name: LogicalRouter
+            uplink_ipv4:
+                description: OVN network uplink ipv4 address
+                example: 10.0.0.1
+                type: string
+                x-go-name: UplinkIPv4
+            uplink_ipv6:
+                description: OVN network uplink ipv6 address
+                example: 2001:0000:130F:0000:0000:09C0:876A:130B.
+                type: string
+                x-go-name: UplinkIPv6
         type: object
         x-go-package: github.com/lxc/incus/v6/shared/api
     NetworkStateVLAN:
@@ -6843,6 +6959,12 @@ paths:
         get:
             description: Returns a list of trusted certificates (URLs).
             operationId: certificates_get
+            parameters:
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -7056,6 +7178,12 @@ paths:
         get:
             description: Returns a list of trusted certificates (structs).
             operationId: certificates_get_recursion1
+            parameters:
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -9374,6 +9502,37 @@ paths:
             summary: Connect to console
             tags:
                 - instances
+    /1.0/instances/{name}/debug/memory:
+        get:
+            description: |-
+                Returns memory debug information of a running instance.
+                Only supported for VMs.
+            operationId: instance_debug_memory_get
+            parameters:
+                - description: Project name
+                  example: default
+                  in: query
+                  name: project
+                  type: string
+                - description: Memory dump format
+                  example: elf
+                  in: query
+                  name: format
+                  type: string
+            responses:
+                "200":
+                    description: Success
+                "400":
+                    $ref: '#/responses/BadRequest'
+                "403":
+                    $ref: '#/responses/Forbidden'
+                "404":
+                    $ref: '#/responses/NotFound'
+                "500":
+                    $ref: '#/responses/InternalServerError'
+            summary: Get memory debug information of an instance
+            tags:
+                - instances
     /1.0/instances/{name}/exec:
         post:
             consumes:
@@ -10644,6 +10803,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -10910,6 +11074,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -10993,6 +11162,12 @@ paths:
         get:
             description: Returns a list of network integrations (URLs).
             operationId: network_integrations_get
+            parameters:
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -11192,6 +11367,12 @@ paths:
         get:
             description: Returns a list of network integrations (structs).
             operationId: network_integrations_get_recursion1
+            parameters:
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -11240,6 +11421,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -11447,6 +11633,11 @@ paths:
                   example: default
                   in: query
                   name: project
+                  type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
                   type: string
             produces:
                 - application/json
@@ -11656,6 +11847,11 @@ paths:
                   in: query
                   name: project
                   type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -11704,6 +11900,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -11752,6 +11953,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -12106,6 +12312,11 @@ paths:
                   in: query
                   name: project
                   type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -12314,6 +12525,11 @@ paths:
                   in: query
                   name: project
                   type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -12356,6 +12572,11 @@ paths:
                   example: default
                   in: query
                   name: project
+                  type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
                   type: string
             produces:
                 - application/json
@@ -12605,6 +12826,11 @@ paths:
                   in: query
                   name: project
                   type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -12647,6 +12873,11 @@ paths:
                   example: default
                   in: query
                   name: project
+                  type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
                   type: string
             produces:
                 - application/json
@@ -12858,6 +13089,11 @@ paths:
                   in: query
                   name: project
                   type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -12906,6 +13142,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -13250,6 +13491,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -13494,6 +13740,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -13531,6 +13782,12 @@ paths:
         get:
             description: Returns a list of projects (URLs).
             operationId: projects_get
+            parameters:
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -13807,6 +14064,12 @@ paths:
         get:
             description: Returns a list of projects (structs).
             operationId: projects_get_recursion1
+            parameters:
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -13889,6 +14152,11 @@ paths:
                   example: default
                   in: query
                   name: project
+                  type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
                   type: string
             produces:
                 - application/json
@@ -14337,6 +14605,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -14898,6 +15171,11 @@ paths:
                   in: query
                   name: all-projects
                   type: boolean
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
+                  type: string
             produces:
                 - application/json
             responses:
@@ -16069,6 +16347,11 @@ paths:
                   example: default
                   in: query
                   name: project
+                  type: string
+                - description: Collection filter
+                  example: default
+                  in: query
+                  name: filter
                   type: string
             produces:
                 - application/json

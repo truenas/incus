@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -631,7 +632,7 @@ func (c *cmdInfo) instanceInfo(d incus.InstanceServer, remote config.Remote, nam
 	}
 
 	fmt.Printf(i18n.G("Name: %s")+"\n", inst.Name)
-
+	fmt.Printf(i18n.G("Description: %s")+"\n", inst.Description)
 	fmt.Printf(i18n.G("Status: %s")+"\n", strings.ToUpper(inst.Status))
 
 	instType := inst.Type
@@ -831,7 +832,7 @@ func (c *cmdInfo) instanceInfo(d incus.InstanceServer, remote config.Remote, nam
 			i18n.G("Stateful"),
 		}
 
-		_ = cli.RenderTable(cli.TableFormatTable, snapHeader, snapData, inst.Snapshots)
+		_ = cli.RenderTable(os.Stdout, cli.TableFormatTable, snapHeader, snapData, inst.Snapshots)
 	}
 
 	// List backups
@@ -883,7 +884,7 @@ func (c *cmdInfo) instanceInfo(d incus.InstanceServer, remote config.Remote, nam
 			i18n.G("Optimized Storage"),
 		}
 
-		_ = cli.RenderTable(cli.TableFormatTable, backupHeader, backupData, inst.Backups)
+		_ = cli.RenderTable(os.Stdout, cli.TableFormatTable, backupHeader, backupData, inst.Backups)
 	}
 
 	if showLog {

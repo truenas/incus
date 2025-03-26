@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/ioprogress"
+	"github.com/lxc/incus/v6/shared/logger"
 	"github.com/lxc/incus/v6/shared/osarch"
 	"github.com/lxc/incus/v6/shared/subprocess"
 	"github.com/lxc/incus/v6/shared/units"
@@ -28,6 +31,21 @@ type ociInfo struct {
 	LayersData   []struct {
 		Size int64 `json:"Size"`
 	} `json:"LayersData"`
+}
+
+// Get the proxy host value.
+func (r *ProtocolOCI) getProxyHost() (*url.URL, error) {
+	req, err := http.NewRequest("GET", r.httpHost, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	proxy, err := r.http.Transport.(*http.Transport).Proxy(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return proxy, nil
 }
 
 // Image handling functions
@@ -98,6 +116,21 @@ func (r *ProtocolOCI) GetImage(fingerprint string) (*api.Image, string, error) {
 func (r *ProtocolOCI) GetImageFile(fingerprint string, req ImageFileRequest) (*ImageFileResponse, error) {
 	ctx := context.Background()
 
+	// Get proxy details.
+	proxy, err := r.getProxyHost()
+	if err != nil {
+		return nil, err
+	}
+
+	var env []string
+	if proxy != nil {
+		env = []string{
+			fmt.Sprintf("HTTPS_PROXY=%s", proxy),
+			fmt.Sprintf("HTTP_PROXY=%s", proxy),
+		}
+	}
+
+	// Get the cached entry.
 	info, ok := r.cache[fingerprint]
 	if !ok {
 		_, err := exec.LookPath("skopeo")
@@ -117,7 +150,7 @@ func (r *ProtocolOCI) GetImageFile(fingerprint string, req ImageFileRequest) (*I
 		return nil, fmt.Errorf("OCI image export currently requires root access")
 	}
 
-	_, err := exec.LookPath("umoci")
+	_, err = exec.LookPath("umoci")
 	if err != nil {
 		return nil, fmt.Errorf("OCI container handling requires \"umoci\" be present on the system")
 	}
@@ -145,13 +178,18 @@ func (r *ProtocolOCI) GetImageFile(fingerprint string, req ImageFileRequest) (*I
 		req.ProgressHandler(ioprogress.ProgressData{Text: "Retrieving OCI image from registry"})
 	}
 
-	_, err = subprocess.RunCommand(
+	stdout, _, err := subprocess.RunCommandSplit(
+		ctx,
+		env,
+		nil,
 		"skopeo",
 		"--insecure-policy",
 		"copy",
+		"--remove-signatures",
 		fmt.Sprintf("%s/%s", strings.Replace(r.httpHost, "https://", "docker://", -1), info.Alias),
 		fmt.Sprintf("oci:%s:latest", filepath.Join(ociPath, "oci")))
 	if err != nil {
+		logger.Debug("Error copying remote image to local", logger.Ctx{"image": info.Alias, "stdout": stdout, "stderr": err})
 		return nil, err
 	}
 
@@ -160,13 +198,14 @@ func (r *ProtocolOCI) GetImageFile(fingerprint string, req ImageFileRequest) (*I
 		req.ProgressHandler(ioprogress.ProgressData{Text: "Unpacking the OCI image"})
 	}
 
-	_, err = subprocess.RunCommand(
+	stdout, err = subprocess.RunCommand(
 		"umoci",
 		"unpack",
 		"--keep-dirlinks",
 		"--image", filepath.Join(ociPath, "oci"),
 		filepath.Join(ociPath, "image"))
 	if err != nil {
+		logger.Debug("Error unpacking OCI image", logger.Ctx{"image": filepath.Join(ociPath, "oci"), "stdout": stdout, "stderr": err})
 		return nil, err
 	}
 
@@ -302,9 +341,31 @@ func (r *ProtocolOCI) GetImageAliasNames() ([]string, error) {
 
 // GetImageAlias returns an existing alias as an ImageAliasesEntry struct.
 func (r *ProtocolOCI) GetImageAlias(name string) (*api.ImageAliasesEntry, string, error) {
-	// Get the image information from skopeo.
-	stdout, err := subprocess.RunCommand("skopeo", "inspect", fmt.Sprintf("%s/%s", strings.Replace(r.httpHost, "https://", "docker://", -1), name))
+	// Get proxy details.
+	proxy, err := r.getProxyHost()
 	if err != nil {
+		return nil, "", err
+	}
+
+	var env []string
+	if proxy != nil {
+		env = []string{
+			fmt.Sprintf("HTTPS_PROXY=%s", proxy),
+			fmt.Sprintf("HTTP_PROXY=%s", proxy),
+		}
+	}
+
+	// Get the image information from skopeo.
+	stdout, _, err := subprocess.RunCommandSplit(
+		context.TODO(),
+		env,
+		nil,
+		"skopeo",
+		"inspect",
+		fmt.Sprintf("%s/%s", strings.Replace(r.httpHost, "https://", "docker://", -1), name))
+
+	if err != nil {
+		logger.Debug("Error getting image alias", logger.Ctx{"name": name, "stdout": stdout, "stderr": err})
 		return nil, "", err
 	}
 

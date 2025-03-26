@@ -70,6 +70,7 @@ var api10 = []APIEndpoint{
 	instanceSnapshotsCmd,
 	instanceStateCmd,
 	instanceAccessCmd,
+	instanceDebugMemoryCmd,
 	eventsCmd,
 	imageAliasCmd,
 	imageAliasesCmd,
@@ -1009,6 +1010,15 @@ func doApi10UpdateTriggers(d *Daemon, nodeChanged, clusterChanged map[string]str
 		err := scriptletLoad.InstancePlacementSet(value)
 		if err != nil {
 			return fmt.Errorf("Failed saving instance placement scriptlet: %w", err)
+		}
+	}
+
+	// Setup the authorization scriptlet.
+	value, ok = clusterChanged["authorization.scriptlet"]
+	if ok {
+		err := d.setupAuthorizationScriptlet(value)
+		if err != nil {
+			return err
 		}
 	}
 

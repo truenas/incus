@@ -2782,7 +2782,7 @@ test_clustering_image_refresh() {
 
   # Trigger image refresh on all nodes
   for incus_dir in "${INCUS_ONE_DIR}" "${INCUS_TWO_DIR}" "${INCUS_THREE_DIR}"; do
-    INCUS_DIR="${incus_dir}" incus query /internal/testing/image-refresh &
+    INCUS_DIR="${incus_dir}" incus query /internal/debug/image-refresh &
     pids="$! ${pids}"
   done
 
@@ -2820,7 +2820,7 @@ test_clustering_image_refresh() {
   # Trigger image refresh on all nodes. This shouldn't do anything as the image
   # is already up-to-date.
   for incus_dir in "${INCUS_ONE_DIR}" "${INCUS_TWO_DIR}" "${INCUS_THREE_DIR}"; do
-    INCUS_DIR="${incus_dir}" incus query /internal/testing/image-refresh &
+    INCUS_DIR="${incus_dir}" incus query /internal/debug/image-refresh &
     pids="$! ${pids}"
   done
 
@@ -2846,7 +2846,7 @@ test_clustering_image_refresh() {
 
   # Trigger image refresh on all nodes
   for incus_dir in "${INCUS_ONE_DIR}" "${INCUS_TWO_DIR}" "${INCUS_THREE_DIR}"; do
-    INCUS_DIR="${incus_dir}" incus query /internal/testing/image-refresh &
+    INCUS_DIR="${incus_dir}" incus query /internal/debug/image-refresh &
     pids="$! ${pids}"
   done
 
@@ -3449,8 +3449,9 @@ test_clustering_groups() {
   ! incus cluster group remove cluster:node1 default || false
 
   # Create new cluster group which should be empty
-  incus cluster group create cluster:foobar
+  incus cluster group create cluster:foobar --description "Test description"
   [ "$(incus query cluster:/1.0/cluster/groups/foobar | jq '.members | length')" -eq 0 ]
+  [ "$(incus query cluster:/1.0/cluster/groups/foobar | jq '.description == "Test description"')" = "true" ]
 
   # Copy both description and members from default group
   incus cluster group show cluster:default | incus cluster group edit cluster:foobar

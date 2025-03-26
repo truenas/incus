@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 
@@ -386,6 +387,29 @@ func ensureVolumeBlockFile(vol Volume, path string, sizeBytes int64, allowUnsafe
 	}
 
 	return false, nil
+}
+
+// enlargeVolumeBlockFile enlarges the raw block file for a volume to the specified size.
+func enlargeVolumeBlockFile(path string, volSize int64) error {
+	if linux.IsBlockdevPath(path) {
+		return nil
+	}
+
+	actualSize, err := BlockDiskSizeBytes(path)
+	if err != nil {
+		return err
+	}
+
+	if volSize < actualSize {
+		return fmt.Errorf("Block volumes cannot be shrunk: %w", ErrCannotBeShrunk)
+	}
+
+	err = ensureSparseFile(path, volSize)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // mkfsOptions represents options for filesystem creation.
@@ -797,6 +821,26 @@ func BlockDiskSizeBytes(blockDiskPath string) (int64, error) {
 	return fi.Size(), nil
 }
 
+// GetPhysicalBlockSize returns the physical block size for the device.
+func GetPhysicalBlockSize(blockDiskPath string) (int, error) {
+	// Open the block device.
+	f, err := os.Open(blockDiskPath)
+	if err != nil {
+		return -1, err
+	}
+
+	defer func() { _ = f.Close() }()
+
+	// Query the physical block size.
+	var res int32
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(f.Fd()), unix.BLKPBSZGET, uintptr(unsafe.Pointer(&res)))
+	if errno != 0 {
+		return -1, fmt.Errorf("Failed to BLKPBSZGET: %w", unix.Errno(errno))
+	}
+
+	return int(res), nil
+}
+
 // OperationLockName returns the storage specific lock name to use with locking package.
 func OperationLockName(operationName string, poolName string, volType VolumeType, contentType ContentType, volName string) string {
 	return fmt.Sprintf("%s/%s/%s/%s/%s", operationName, poolName, volType, contentType, volName)
@@ -836,6 +880,16 @@ func loopDeviceSetup(sourcePath string) (string, error) {
 		} else {
 			return "", err
 		}
+	}
+
+	return strings.TrimSpace(out), nil
+}
+
+// loopDeviceSetupAlign creates a forced 512-byte aligned loop device.
+func loopDeviceSetupAlign(sourcePath string) (string, error) {
+	out, err := subprocess.RunCommand("losetup", "-b", "512", "--find", "--nooverlap", "--show", sourcePath)
+	if err != nil {
+		return "", err
 	}
 
 	return strings.TrimSpace(out), nil

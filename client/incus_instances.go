@@ -1696,7 +1696,7 @@ func (r *ProtocolIncus) GetInstanceFileSFTP(instanceName string) (*sftp.Client, 
 	}
 
 	// Get a SFTP client.
-	client, err := sftp.NewClientPipe(conn, conn)
+	client, err := sftp.NewClientPipe(conn, conn, sftp.MaxPacketUnchecked(128*1024))
 	if err != nil {
 		_ = conn.Close()
 		return nil, err
@@ -2528,6 +2528,10 @@ func (r *ProtocolIncus) ConsoleInstance(instanceName string, console api.Instanc
 		return nil, fmt.Errorf("The server is missing the required \"console_vga_type\" API extension")
 	}
 
+	if console.Force && !r.HasExtension("console_force") {
+		return nil, fmt.Errorf(`The server is missing the required "console_force" API extension`)
+	}
+
 	// Send the request
 	op, _, err := r.queryOperation("POST", fmt.Sprintf("%s/%s/console", path, url.PathEscape(instanceName)), console, "")
 	if err != nil {
@@ -2614,6 +2618,10 @@ func (r *ProtocolIncus) ConsoleInstanceDynamic(instanceName string, console api.
 
 	if console.Type == "vga" && !r.HasExtension("console_vga_type") {
 		return nil, nil, fmt.Errorf("The server is missing the required \"console_vga_type\" API extension")
+	}
+
+	if console.Force && !r.HasExtension("console_force") {
+		return nil, nil, fmt.Errorf(`The server is missing the required "console_force" API extension`)
 	}
 
 	// Send the request.
@@ -3022,4 +3030,43 @@ func (r *ProtocolIncus) proxyMigration(targetOp *operation, targetSecrets map[st
 	}()
 
 	return nil
+}
+
+// GetInstanceDebugMemory retrieves memory debug information for a given instance and saves it to the specified file path.
+func (r *ProtocolIncus) GetInstanceDebugMemory(name string, format string) (io.ReadCloser, error) {
+	path, v, err := r.instanceTypeToPath(api.InstanceTypeVM)
+	if err != nil {
+		return nil, err
+	}
+
+	v.Set("format", format)
+
+	// Prepare the HTTP request
+	requestURL := fmt.Sprintf("%s/1.0%s/%s/debug/memory?%s", r.httpBaseURL.String(), path, url.PathEscape(name), v.Encode())
+
+	requestURL, err = r.setQueryAttributes(requestURL)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Send the request
+	resp, err := r.DoHTTP(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check the return value for a cleaner error
+	if resp.StatusCode != http.StatusOK {
+		_, _, err := incusParseResponse(resp)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return resp.Body, nil
 }

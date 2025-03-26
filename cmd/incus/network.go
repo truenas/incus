@@ -328,6 +328,8 @@ func (c *cmdNetworkAttachProfile) Run(cmd *cobra.Command, args []string) error {
 type cmdNetworkCreate struct {
 	global  *cmdGlobal
 	network *cmdNetwork
+
+	flagDescription string
 }
 
 func (c *cmdNetworkCreate) Command() *cobra.Command {
@@ -346,6 +348,7 @@ incus network create bar network=baz --type ovn
 
 	cmd.Flags().StringVar(&c.network.flagTarget, "target", "", i18n.G("Cluster member name")+"``")
 	cmd.Flags().StringVarP(&c.network.flagType, "type", "t", "", i18n.G("Network type")+"``")
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Network description")+"``")
 
 	cmd.RunE = c.Run
 
@@ -354,7 +357,7 @@ incus network create bar network=baz --type ovn
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
 
-		return c.global.cmpRemotes(false)
+		return c.global.cmpRemotes(toComplete, false)
 	}
 
 	return cmd
@@ -398,6 +401,10 @@ func (c *cmdNetworkCreate) Run(cmd *cobra.Command, args []string) error {
 
 	network.Name = resource.name
 	network.Type = c.network.flagType
+
+	if c.flagDescription != "" {
+		network.Description = c.flagDescription
+	}
 
 	if network.Config == nil {
 		network.Config = map[string]string{}
@@ -1030,6 +1037,14 @@ func (c *cmdNetworkInfo) Run(cmd *cobra.Command, args []string) error {
 		if client.HasExtension("network_state_ovn_lr") {
 			fmt.Printf("  %s: %s\n", i18n.G("Logical router"), state.OVN.LogicalRouter)
 		}
+
+		if state.OVN.UplinkIPv4 != "" {
+			fmt.Printf("  %s: %s\n", i18n.G("IPv4 uplink address"), state.OVN.UplinkIPv4)
+		}
+
+		if state.OVN.UplinkIPv6 != "" {
+			fmt.Printf("  %s: %s\n", i18n.G("IPv6 uplink address"), state.OVN.UplinkIPv6)
+		}
 	}
 
 	return nil
@@ -1070,8 +1085,13 @@ t - Interface type
 u - Used by (count)`))
 
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultNetworkColumns, i18n.G("Columns")+"``")
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().BoolVar(&c.flagAllProjects, "all-projects", false, i18n.G("List networks in all projects"))
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
+
 	cmd.RunE = c.Run
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -1079,7 +1099,7 @@ u - Used by (count)`))
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
 
-		return c.global.cmpRemotes(false)
+		return c.global.cmpRemotes(toComplete, false)
 	}
 
 	return cmd
@@ -1227,7 +1247,7 @@ func (c *cmdNetworkList) Run(cmd *cobra.Command, args []string) error {
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, networks)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, networks)
 }
 
 // List leases.
@@ -1269,8 +1289,12 @@ Pre-defined column shorthand chars:
   i - IP Address
   t - Type
   L - Location of the DHCP Lease (e.g. its cluster member)`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultNetworkListLeasesColumns, i18n.G("Columns")+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.RunE = c.Run
 
@@ -1388,7 +1412,7 @@ func (c *cmdNetworkListLeases) Run(cmd *cobra.Command, args []string) error {
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, leases)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, leases)
 }
 
 // Rename.

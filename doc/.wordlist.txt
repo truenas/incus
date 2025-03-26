@@ -17,6 +17,7 @@ AXFR
 backend
 backends
 backported
+Backports
 balancer
 balancers
 benchmarking
@@ -64,6 +65,7 @@ Diátaxis
 Diffie
 Distrobuilder
 DNS
+dnsmasq
 DNSSEC
 DoS
 DRM
@@ -82,6 +84,7 @@ ES
 ESA
 ETag
 failover
+frontend
 FQDNs
 Furo
 gapped
@@ -120,6 +123,7 @@ InfluxDB
 init
 initramfs
 integrations
+IOMMU
 IOPS
 IOV
 IPAM
@@ -183,6 +187,7 @@ OpenID
 OpenMetrics
 OpenSSL
 OpenSUSE
+openSUSE
 OpenTofu
 OSD
 overcommit
@@ -191,6 +196,8 @@ overlayfs
 OVMF
 OVN
 OVS
+PackageHub
+passthrough
 Pbit
 PCI
 PCIe
@@ -222,6 +229,7 @@ RBD
 README
 reconfiguring
 requestor
+resolvers
 RESTful
 RHEL
 rootfs
@@ -323,6 +331,7 @@ VMs
 VPD
 VPN
 VPS
+VRF
 vSwitch
 VXLAN
 WebSocket

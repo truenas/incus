@@ -83,6 +83,8 @@ type Instance interface {
 	Restart(timeout time.Duration) error
 	Rebuild(img *api.Image, op *operations.Operation) error
 	Unfreeze() error
+
+	ReloadDevice(devName string) error
 	RegisterDevices()
 
 	Info() Info
@@ -194,6 +196,7 @@ type VM interface {
 	AgentCertificate() *x509.Certificate
 	ConsoleLog() (string, error)
 	ConsoleScreenshot(screenshotFile *os.File) error
+	DumpGuestMemory(w *os.File, format string) error
 }
 
 // CriuMigrationArgs arguments for CRIU migration.

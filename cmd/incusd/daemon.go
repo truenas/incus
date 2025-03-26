@@ -429,8 +429,44 @@ func (d *Daemon) checkTrustedClient(r *http.Request) error {
 }
 
 // getTrustedCertificates returns trusted certificates key on DB type and fingerprint.
-func (d *Daemon) getTrustedCertificates() map[certificate.Type]map[string]x509.Certificate {
-	return d.clientCerts.GetCertificates()
+//
+// When in PKI mode, this also filters out any non-server certificate which isn't issued by the PKI.
+func (d *Daemon) getTrustedCertificates() (map[certificate.Type]map[string]x509.Certificate, error) {
+	certs := d.clientCerts.GetCertificates()
+
+	// If not in PKI mode, return all certificates.
+	if !util.PathExists(internalUtil.VarPath("server.ca")) {
+		return certs, nil
+	}
+
+	// If in PKI mode, filter certificates that aren't trusted by the CA.
+	ca, err := localtls.ReadCert(internalUtil.VarPath("server.ca"))
+	if err != nil {
+		return nil, err
+	}
+
+	certPool := x509.NewCertPool()
+	certPool.AddCert(ca)
+
+	for certType, certEntries := range certs {
+		if certType == certificate.TypeServer {
+			continue
+		}
+
+		for name, entry := range certEntries {
+			_, err := entry.Verify(x509.VerifyOptions{
+				Roots:     certPool,
+				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			})
+
+			if err != nil {
+				// Skip certificates that aren't signed by the PKI.
+				delete(certs[certType], name)
+			}
+		}
+	}
+
+	return certs, nil
 }
 
 // Authenticate validates an incoming http Request
@@ -441,7 +477,10 @@ func (d *Daemon) getTrustedCertificates() map[certificate.Type]map[string]x509.C
 // Returns whether trusted or not, the username (or certificate fingerprint) of the trusted client, and the type of
 // client that has been authenticated (cluster, unix, or tls).
 func (d *Daemon) Authenticate(w http.ResponseWriter, r *http.Request) (bool, string, string, error) {
-	trustedCerts := d.getTrustedCertificates()
+	trustedCerts, err := d.getTrustedCertificates()
+	if err != nil {
+		return false, "", "", err
+	}
 
 	// Allow internal cluster traffic by checking against the trusted certfificates.
 	if r.TLS != nil {
@@ -1438,6 +1477,7 @@ func (d *Daemon) init() error {
 	syslogSocketEnabled := d.localConfig.SyslogSocket()
 	openfgaAPIURL, openfgaAPIToken, openfgaStoreID := d.globalConfig.OpenFGA()
 	instancePlacementScriptlet := d.globalConfig.InstancesPlacementScriptlet()
+	authorizationScriptlet := d.globalConfig.AuthorizationScriptlet()
 
 	d.endpoints.NetworkUpdateTrustedProxy(d.globalConfig.HTTPSTrustedProxy())
 	d.globalConfigMu.Unlock()
@@ -1471,6 +1511,14 @@ func (d *Daemon) init() error {
 		err = d.setupOpenFGA(openfgaAPIURL, openfgaAPIToken, openfgaStoreID)
 		if err != nil {
 			return fmt.Errorf("Failed to configure OpenFGA: %w", err)
+		}
+	}
+
+	// Setup the authorization scriptlet.
+	if authorizationScriptlet != "" {
+		err = d.setupAuthorizationScriptlet(authorizationScriptlet)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -2202,6 +2250,38 @@ func (d *Daemon) setupOpenFGA(apiURL string, apiToken string, storeID string) er
 	d.authorizer = openfgaAuthorizer
 
 	revert.Success()
+	return nil
+}
+
+// Setup authorization scriptlet.
+func (d *Daemon) setupAuthorizationScriptlet(scriptlet string) error {
+	err := scriptletLoad.AuthorizationSet(scriptlet)
+	if err != nil {
+		return fmt.Errorf("Failed saving authorization scriptlet: %w", err)
+	}
+
+	if scriptlet == "" {
+		// Reset to default authorizer.
+		d.authorizer, err = auth.LoadAuthorizer(d.shutdownCtx, auth.DriverTLS, logger.Log, d.clientCerts)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	// Fail if not using the default tls or scriptlet authorizer.
+	switch d.authorizer.(type) {
+	case *auth.TLS, *auth.Scriptlet:
+		d.authorizer, err = auth.LoadAuthorizer(d.shutdownCtx, auth.DriverScriptlet, logger.Log, d.clientCerts)
+		if err != nil {
+			return err
+		}
+
+	default:
+		return errors.New("Attempting to setup scriptlet authorization while another authorizer is already set")
+	}
+
 	return nil
 }
 

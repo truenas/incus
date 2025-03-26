@@ -52,7 +52,11 @@ func (c *cmdAdminSQL) Command() *cobra.Command {
   recovery. The development team will occasionally provide hotfixes to users as a
   set of database queries to fix some data inconsistency.`))
 	cmd.RunE = c.Run
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	return cmd
 }
@@ -166,5 +170,5 @@ func (c *cmdAdminSQL) sqlPrintSelectResult(result internalSQL.SQLResult) error {
 		data = append(data, rowData)
 	}
 
-	return cli.RenderTable(c.flagFormat, result.Columns, data, result)
+	return cli.RenderTable(os.Stdout, c.flagFormat, result.Columns, data, result)
 }

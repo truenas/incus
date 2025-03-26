@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -110,7 +111,11 @@ func (c *cmdAliasList) Command() *cobra.Command {
 	cmd.Short = i18n.G("List aliases")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`List aliases`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.RunE = c.Run
 
@@ -149,7 +154,7 @@ func (c *cmdAliasList) Run(cmd *cobra.Command, args []string) error {
 		i18n.G("TARGET"),
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, conf.Aliases)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, conf.Aliases)
 }
 
 // Rename.

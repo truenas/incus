@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/checkpoint-restore/go-criu/v6/crit"
-	"github.com/flosch/pongo2"
+	"github.com/flosch/pongo2/v6"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/kballard/go-shellquote"
@@ -566,12 +566,13 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 			continue
 		}
 
-		cBase := int64(0)
-		if container.ExpandedConfig()["volatile.idmap.base"] != "" {
-			cBase, err = strconv.ParseInt(container.ExpandedConfig()["volatile.idmap.base"], 10, 64)
-			if err != nil {
-				return nil, 0, err
-			}
+		if container.ExpandedConfig()["volatile.idmap.base"] == "" {
+			continue
+		}
+
+		cBase, err := strconv.ParseInt(container.ExpandedConfig()["volatile.idmap.base"], 10, 64)
+		if err != nil {
+			return nil, 0, err
 		}
 
 		cSize, err := idmapSize(container.ExpandedConfig()["security.idmap.size"])
@@ -1912,9 +1913,9 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 	revert := revert.New()
 	defer revert.Fail()
 
-	// Assign a NUMA node if needed.
+	// Assign NUMA node(s) if needed.
 	if d.expandedConfig["limits.cpu.nodes"] == "balanced" {
-		err := d.setNUMANode()
+		err := d.balanceNUMANodes()
 		if err != nil {
 			return "", nil, err
 		}
@@ -2303,6 +2304,34 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		// Mark the container as an OCI container if not already set.
 		if !util.IsTrue(d.expandedConfig["volatile.container.oci"]) {
 			volatileSet["volatile.container.oci"] = "true"
+		}
+
+		// Allow unprivileged users to use ping.
+		maxGid := int64(4294967295)
+
+		if !d.IsPrivileged() {
+			maxGid = 0
+			idMap, err := d.CurrentIdmap()
+			if err != nil {
+				return "", nil, err
+			}
+
+			for _, entry := range idMap.Entries {
+				if entry.NSID+entry.MapRange-1 > maxGid {
+					maxGid = entry.NSID + entry.MapRange - 1
+				}
+			}
+		}
+
+		err = lxcSetConfigItem(cc, "lxc.sysctl.net.ipv4.ping_group_range", fmt.Sprintf("0 %d", maxGid))
+		if err != nil {
+			return "", nil, err
+		}
+
+		// Allow unprivileged users to use low ports.
+		err = lxcSetConfigItem(cc, "lxc.sysctl.net.ipv4.ip_unprivileged_port_start", "0")
+		if err != nil {
+			return "", nil, err
 		}
 
 		// Configure the entry point.
@@ -6352,9 +6381,9 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		// A zero length Snapshots slice indicates volume only migration in
 		// VolumeTargetArgs. So if VolumeOnly was requested, do not populate them.
 		if args.Snapshots {
-			volTargetArgs.Snapshots = make([]string, 0, len(snapshots))
+			volTargetArgs.Snapshots = make([]*migration.Snapshot, 0, len(snapshots))
 			for _, snap := range snapshots {
-				volTargetArgs.Snapshots = append(volTargetArgs.Snapshots, *snap.Name)
+				volTargetArgs.Snapshots = append(volTargetArgs.Snapshots, &migration.Snapshot{Name: snap.Name})
 
 				// Only create snapshot instance DB records if not doing a cluster same-name move.
 				// As otherwise the DB records will already exist.
@@ -8896,4 +8925,14 @@ func (d *lxc) loadRawLXCConfig(cc *liblxc.Container) error {
 // forfileRunningLockName returns the forkfile-running_ID lock name.
 func (d *common) forkfileRunningLockName() string {
 	return fmt.Sprintf("forkfile-running_%d", d.id)
+}
+
+// ReloadDevice triggers an empty Update call to the underlying device.
+func (d *lxc) ReloadDevice(devName string) error {
+	dev, err := d.deviceLoad(d, devName, d.expandedDevices[devName])
+	if err != nil {
+		return err
+	}
+
+	return dev.Update(d.expandedDevices, true)
 }

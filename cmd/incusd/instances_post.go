@@ -694,10 +694,14 @@ func createFromBackup(s *state.State, r *http.Request, projectName string, data 
 		return response.InternalError(err)
 	}
 
-	logger.Debug("Reading backup file info")
 	bInfo, err := backup.GetInfo(backupFile, s.OS, backupFile.Name())
 	if err != nil {
 		return response.BadRequest(err)
+	}
+
+	// Detect broken legacy backups.
+	if bInfo.Config == nil {
+		return response.BadRequest(fmt.Errorf("Backup file is missing required information"))
 	}
 
 	// Check project permissions.
@@ -1356,7 +1360,6 @@ func clusterCopyContainerInternal(ctx context.Context, s *state.State, r *http.R
 		pullReq := api.InstanceSnapshotPost{
 			Migration: true,
 			Live:      req.Source.Live,
-			Name:      req.Name,
 		}
 
 		op, err := client.MigrateInstanceSnapshot(cName, sName, pullReq)
@@ -1371,7 +1374,6 @@ func clusterCopyContainerInternal(ctx context.Context, s *state.State, r *http.R
 			Migration:    true,
 			Live:         req.Source.Live,
 			InstanceOnly: instanceOnly,
-			Name:         req.Name,
 		}
 
 		op, err := client.MigrateInstance(req.Source.Source, pullReq)

@@ -854,7 +854,7 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 	//  shortdesc: Whether to use idmapped mounts for syscall interception
 	"security.syscalls.intercept.mount.shift": validate.Optional(validate.IsBool),
 
-	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.sched_setcheduler)
+	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.sched_setscheduler)
 	// This system call allows increasing process priority.
 	// ---
 	//  type: bool
@@ -1011,6 +1011,16 @@ var InstanceConfigKeysVM = map[string]func(value string) error{
 	//  shortdesc: Whether to use a firmware that supports UEFI-incompatible operating systems
 	"security.csm": validate.Optional(validate.IsBool),
 
+	// gendoc:generate(entity=instance, group=security, key=security.iommu)
+	//
+	// ---
+	//  type: bool
+	//  defaultdesc: `false`
+	//  liveupdate: no
+	//  condition: virtual machine
+	//  shortdesc: Whether to enable virtual IOMMU, useful for device passthrough and nesting
+	"security.iommu": validate.Optional(validate.IsBool),
+
 	// gendoc:generate(entity=instance, group=security, key=security.secureboot)
 	// When disabling this option, consider enabling {config:option}`instance-security:security.csm`.
 	// ---
@@ -1018,7 +1028,7 @@ var InstanceConfigKeysVM = map[string]func(value string) error{
 	//  defaultdesc: `true`
 	//  liveupdate: no
 	//  condition: virtual machine
-	//  shortdesc: Whether UEFI secure boot is enabled with the default Microsoft keys
+	//  shortdesc: Whether UEFI secure boot is enforced with the default Microsoft keys
 	"security.secureboot": validate.Optional(validate.IsBool),
 
 	// gendoc:generate(entity=instance, group=security, key=security.sev)
@@ -1060,13 +1070,6 @@ var InstanceConfigKeysVM = map[string]func(value string) error{
 	//  condition: virtual machine
 	//  shortdesc: The guest owner's `base64`-encoded session blob
 	"security.sev.session.data": validate.Optional(validate.IsAny),
-
-	// gendoc:generate(entity=instance, group=miscellaneous, key=user.*)
-	// User keys can be used in search.
-	// ---
-	//  type: string
-	//  liveupdate: yes
-	//  shortdesc: Free-form user key/value storage
 
 	// gendoc:generate(entity=instance, group=miscellaneous, key=agent.nic_config)
 	// For containers, the name and MTU of the default network interfaces is used for the instance devices.
@@ -1320,15 +1323,37 @@ func ConfigKeyChecker(key string, instanceType api.InstanceType) (func(value str
 		}
 	}
 
+	// gendoc:generate(entity=instance, group=miscellaneous, key=environment.*)
+	// Extra environment variables to set on boot and during exec.
+	// ---
+	//  type: string
+	//  liveupdate: yes
+	//  shortdesc: Free-form environment key/value
 	if strings.HasPrefix(key, "environment.") {
 		return validate.IsAny, nil
 	}
 
+	// gendoc:generate(entity=instance, group=miscellaneous, key=user.*)
+	// User keys can be used in search.
+	// ---
+	//  type: string
+	//  liveupdate: yes
+	//  shortdesc: Free-form user key/value storage
 	if strings.HasPrefix(key, "user.") {
 		return validate.IsAny, nil
 	}
 
 	if strings.HasPrefix(key, "image.") {
+		return validate.IsAny, nil
+	}
+
+	// gendoc:generate(entity=instance, group=miscellaneous, key=smbios11.*)
+	// `SMBIOS Type 11` configuration keys.
+	// ---
+	//  type: string
+	//  liveupdate: yes
+	//  shortdesc: Free-form `SMBIOS Type 11` key/value
+	if strings.HasPrefix(key, "smbios11.") && instanceType == api.InstanceTypeAny || instanceType == api.InstanceTypeVM {
 		return validate.IsAny, nil
 	}
 

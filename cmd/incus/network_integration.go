@@ -434,8 +434,12 @@ Pre-defined column shorthand chars:
 	t - Type
 	u - Used by`))
 
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultNetworkIntegrationColumns, i18n.G("Columns")+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.RunE = c.Run
 
@@ -541,7 +545,7 @@ func (c *cmdNetworkIntegrationList) Run(cmd *cobra.Command, args []string) error
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, networkIntegrations)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, networkIntegrations)
 }
 
 // Rename.

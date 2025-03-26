@@ -110,13 +110,17 @@ Pre-defined column shorthand chars:
   u - Used by`))
 
 	cmd.RunE = c.Run
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().BoolVar(&c.flagAllProjects, "all-projects", false, i18n.G("Display network zones from all projects"))
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultNetworkZoneColumns, i18n.G("Columns")+"``")
 
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
+
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
-			return c.global.cmpRemotes(false)
+			return c.global.cmpRemotes(toComplete, false)
 		}
 
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -238,7 +242,7 @@ func (c *cmdNetworkZoneList) Run(cmd *cobra.Command, args []string) error {
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, zones)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, zones)
 }
 
 // Show.
@@ -381,6 +385,8 @@ func (c *cmdNetworkZoneGet) Run(cmd *cobra.Command, args []string) error {
 type cmdNetworkZoneCreate struct {
 	global      *cmdGlobal
 	networkZone *cmdNetworkZone
+
+	flagDescription string
 }
 
 func (c *cmdNetworkZoneCreate) Command() *cobra.Command {
@@ -394,6 +400,8 @@ incus network zone create z1 < config.yaml
     Create network zone z1 with configuration from config.yaml`))
 
 	cmd.RunE = c.Run
+
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Zone description")+"``")
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -447,6 +455,10 @@ func (c *cmdNetworkZoneCreate) Run(cmd *cobra.Command, args []string) error {
 
 	if zone.Config == nil {
 		zone.Config = map[string]string{}
+	}
+
+	if c.flagDescription != "" {
+		zone.Description = c.flagDescription
 	}
 
 	for i := 1; i < len(args); i++ {
@@ -856,7 +868,11 @@ func (c *cmdNetworkZoneRecordList) Command() *cobra.Command {
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G("List available network zone records"))
 
 	cmd.RunE = c.Run
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -918,7 +934,7 @@ func (c *cmdNetworkZoneRecordList) Run(cmd *cobra.Command, args []string) error 
 		i18n.G("ENTRIES"),
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, records)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, records)
 }
 
 // Show.
@@ -1065,6 +1081,8 @@ func (c *cmdNetworkZoneRecordGet) Run(cmd *cobra.Command, args []string) error {
 type cmdNetworkZoneRecordCreate struct {
 	global            *cmdGlobal
 	networkZoneRecord *cmdNetworkZoneRecord
+
+	flagDescription string
 }
 
 func (c *cmdNetworkZoneRecordCreate) Command() *cobra.Command {
@@ -1078,6 +1096,8 @@ incus network zone record create z1 r1 < config.yaml
     Create record r1 for zone z1 with configuration from config.yaml`))
 
 	cmd.RunE = c.Run
+
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Record description")+"``")
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -1134,6 +1154,10 @@ func (c *cmdNetworkZoneRecordCreate) Run(cmd *cobra.Command, args []string) erro
 
 	if record.Config == nil {
 		record.Config = map[string]string{}
+	}
+
+	if c.flagDescription != "" {
+		record.Description = c.flagDescription
 	}
 
 	for i := 2; i < len(args); i++ {

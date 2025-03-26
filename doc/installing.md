@@ -123,21 +123,13 @@ Docker/Podman images of Incus, based on the Zabbly package repository, are avail
 ```
 
 ```{group-tab} Fedora
-RPM packages of Incus and its dependencies are not yet available via official Fedora repositories but via the [`ganto/lxc4`](https://copr.fedorainfracloud.org/coprs/ganto/lxc4/) Community Project (COPR) repository.
-
-Install the COPR plugin for `dnf` and then enable the COPR repository:
-
-    dnf install 'dnf-command(copr)'
-    dnf copr enable ganto/lxc4
+Incus and all of its dependencies are available in Fedora.
 
 Install Incus with:
 
     dnf install incus
 
-For the additional setup steps see [Getting started with Incus on Fedora](https://github.com/ganto/copr-lxc4/wiki/Getting-Started-with-Incus-on-Fedora).
-
-Note that this is not an official project of Incus nor Fedora.
-Please report packaging issues [here](https://github.com/ganto/copr-lxc4/issues).
+Please report packaging issues [here](https://bugzilla.redhat.com/).
 ```
 
 ```{group-tab} Gentoo
@@ -190,7 +182,26 @@ Finally, you can add users to the `incus-admin` group to provide non-root access
 
     users.users.YOUR_USERNAME.extraGroups = ["incus-admin"];
 
+Instead of giving the users a full Incus daemon access, you can add users to the `incus` group, which will only grant access to the Incus user socket. In your NixOS configuration:
+
+    users.users.YOUR_USERNAME.extraGroups = ["incus"];
+
 For any NixOS specific issues, please [file an issue](https://github.com/NixOS/nixpkgs/issues/new/choose) in the package repository.
+```
+
+```{group-tab} openSUSE
+Incus and its dependencies are packaged in both openSUSE Tumbleweed and openSUSE Leap 15.6 and later (this is available through openSUSE Backports, so you can also install the same packages through PackageHub for SUSE Linux Enterprise Server 15 SP6 and later, though no support is provided by SUSE for said packages).
+
+Install Incus with:
+
+    zypper in incus
+
+If migrating from LXD, please also install `incus-tools` for `lxd-to-incus`.
+
+The default setup should work fine for most users, but if you intend to run many containers on your system you may wish to apply some custom `sysctl` settings [as suggested in the production deployments guide](./reference/server_settings.md).
+
+Please report packaging issues [here](https://bugzilla.opensuse.org/).
+Make sure to mark the bug as being in the "Containers" component, to make sure the right package maintainers see the bug.
 ```
 
 ```{group-tab} Rocky Linux

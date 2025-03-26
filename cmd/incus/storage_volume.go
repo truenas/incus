@@ -570,6 +570,7 @@ type cmdStorageVolumeCreate struct {
 	storage         *cmdStorage
 	storageVolume   *cmdStorageVolume
 	flagContentType string
+	flagDescription string
 }
 
 func (c *cmdStorageVolumeCreate) Command() *cobra.Command {
@@ -586,6 +587,8 @@ incus storage volume create default foo < config.yaml
 
 	cmd.Flags().StringVar(&c.storage.flagTarget, "target", "", i18n.G("Cluster member name")+"``")
 	cmd.Flags().StringVar(&c.flagContentType, "type", "filesystem", i18n.G("Content type, block or filesystem")+"``")
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Volume description")+"``")
+
 	cmd.RunE = c.Run
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -655,6 +658,10 @@ func (c *cmdStorageVolumeCreate) Run(cmd *cobra.Command, args []string) error {
 		}
 
 		vol.Config[entry[0]] = entry[1]
+	}
+
+	if c.flagDescription != "" {
+		vol.Description = c.flagDescription
 	}
 
 	// If a target was specified, create the volume on the given member.
@@ -1479,7 +1486,7 @@ func (c *cmdStorageVolumeInfo) Run(cmd *cobra.Command, args []string) error {
 			i18n.G("Expires at"),
 		}
 
-		_ = cli.RenderTable(cli.TableFormatTable, snapHeader, snapData, volSnapshots)
+		_ = cli.RenderTable(os.Stdout, cli.TableFormatTable, snapHeader, snapData, volSnapshots)
 	}
 
 	// List backups
@@ -1531,7 +1538,7 @@ func (c *cmdStorageVolumeInfo) Run(cmd *cobra.Command, args []string) error {
 			i18n.G("Optimized Storage"),
 		}
 
-		_ = cli.RenderTable(cli.TableFormatTable, backupHeader, backupData, volBackups)
+		_ = cli.RenderTable(os.Stdout, cli.TableFormatTable, backupHeader, backupData, volBackups)
 	}
 
 	return nil
@@ -1575,7 +1582,11 @@ Column shorthand chars:
     t - Type of volume (custom, image, container or virtual-machine)
     u - Number of references (used by)
     U - Current disk usage`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.RunE = c.Run
 
@@ -1665,7 +1676,7 @@ func (c *cmdStorageVolumeList) Run(cmd *cobra.Command, args []string) error {
 		headers = append(headers, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, headers, data, rawData)
+	return cli.RenderTable(os.Stdout, c.flagFormat, headers, data, rawData)
 }
 
 func (c *cmdStorageVolumeList) parseColumns(clustered bool) ([]volumeColumn, error) {
@@ -2314,8 +2325,9 @@ type cmdStorageVolumeSnapshotCreate struct {
 	storageVolume         *cmdStorageVolume
 	storageVolumeSnapshot *cmdStorageVolumeSnapshot
 
-	flagNoExpiry bool
-	flagReuse    bool
+	flagNoExpiry    bool
+	flagReuse       bool
+	flagDescription string
 }
 
 func (c *cmdStorageVolumeSnapshotCreate) Command() *cobra.Command {
@@ -2333,6 +2345,8 @@ incus storage volume snapshot create default vol1 snap0 < config.yaml
 	cmd.Flags().BoolVar(&c.flagNoExpiry, "no-expiry", false, i18n.G("Ignore any configured auto-expiry for the storage volume"))
 	cmd.Flags().BoolVar(&c.flagReuse, "reuse", false, i18n.G("If the snapshot name already exists, delete and create a new one"))
 	cmd.Flags().StringVar(&c.storage.flagTarget, "target", "", i18n.G("Cluster member name")+"``")
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Snapshot description")+"``")
+
 	cmd.RunE = c.Run
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -2561,7 +2575,11 @@ func (c *cmdStorageVolumeSnapshotList) Command() *cobra.Command {
 		n - Name
 		T - Taken at
 		E - Expiry`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.RunE = c.Run
 
@@ -2638,7 +2656,7 @@ func (c *cmdStorageVolumeSnapshotList) listSnapshots(d incus.InstanceServer, poo
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, snapshots)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, snapshots)
 }
 
 type storageVolumeSnapshotColumn struct {

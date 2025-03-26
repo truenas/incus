@@ -92,9 +92,10 @@ func (c *cmdProject) Command() *cobra.Command {
 
 // Create.
 type cmdProjectCreate struct {
-	global     *cmdGlobal
-	project    *cmdProject
-	flagConfig []string
+	global          *cmdGlobal
+	project         *cmdProject
+	flagConfig      []string
+	flagDescription string
 }
 
 func (c *cmdProjectCreate) Command() *cobra.Command {
@@ -110,12 +111,13 @@ incus project create p1 < config.yaml
     Create a project named p1 with configuration from config.yaml`))
 
 	cmd.Flags().StringArrayVarP(&c.flagConfig, "config", "c", nil, i18n.G("Config key/value to apply to the new project")+"``")
+	cmd.Flags().StringVar(&c.flagDescription, "description", "", i18n.G("Project description")+"``")
 
 	cmd.RunE = c.Run
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
-			return c.global.cmpRemotes(false)
+			return c.global.cmpRemotes(toComplete, false)
 		}
 
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -173,6 +175,10 @@ func (c *cmdProjectCreate) Run(cmd *cobra.Command, args []string) error {
 
 			project.Config[key] = value
 		}
+	}
+
+	if c.flagDescription != "" {
+		project.Description = c.flagDescription
 	}
 
 	err = resource.server.CreateProject(project)
@@ -530,13 +536,17 @@ u - Used By`))
 
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultProjectColumns, i18n.G("Columns")+"``")
 
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.RunE = c.Run
 
 	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
-			return c.global.cmpRemotes(false)
+			return c.global.cmpRemotes(toComplete, false)
 		}
 
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -710,7 +720,7 @@ func (c *cmdProjectList) Run(cmd *cobra.Command, args []string) error {
 		header = append(header, column.Name)
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, projects)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, projects)
 }
 
 // Rename.
@@ -1053,7 +1063,11 @@ func (c *cmdProjectInfo) Command() *cobra.Command {
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Get a summary of resource allocations`))
 	cmd.Flags().BoolVar(&c.flagShowAccess, "show-access", false, i18n.G("Show the instance's access list"))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
+	}
 
 	cmd.RunE = c.Run
 
@@ -1147,7 +1161,7 @@ func (c *cmdProjectInfo) Run(cmd *cobra.Command, args []string) error {
 		i18n.G("USAGE"),
 	}
 
-	return cli.RenderTable(c.flagFormat, header, data, projectState)
+	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, projectState)
 }
 
 // Get current project.
@@ -1185,6 +1199,11 @@ func (c *cmdProjectGetCurrent) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf(i18n.G("Remote %s doesn't exist"), conf.DefaultRemote)
 	}
 
-	fmt.Println(remote.Project)
+	if remote.Project == "" {
+		fmt.Println(api.ProjectDefaultName)
+	} else {
+		fmt.Println(remote.Project)
+	}
+
 	return nil
 }
