@@ -11,7 +11,12 @@ test_container_move() {
 
   # Setup.
   incus project create "${project}"
-  incus storage create "${pool2}" "${incus_backend}"
+  if [ "$incus_backend" = "truenas" ]; then
+    incus storage create "${pool2}" "${incus_backend}" "source=${INCUS_TN_HOST}:${INCUS_TN_DATASET}/$(uuidgen)" "truenas.api_key=${INCUS_TN_APIKEY}"
+  else
+    incus storage create "${pool2}" "${incus_backend}"
+  fi
+
   incus profile create "${profile}" --project "${project}"
   incus profile device add "${profile}" root disk pool="${pool2}" path=/ --project "${project}"
 
