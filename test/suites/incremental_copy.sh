@@ -30,7 +30,10 @@ do_copy() {
   incus storage volume set "${source_pool}" container/c1 user.foo=main
 
   # Set size to check this is supported during copy.
-  incus config device set c1 root size=50MiB
+  if [ "$INCUS_BACKEND" != "truenas" ]; then
+    # FIXME: truenas complaining that block backed volumes can't be shrunk
+    incus config device set c1 root size=50MiB
+  fi
 
   targetPoolFlag=
   if [ -n "${target_pool}" ]; then
