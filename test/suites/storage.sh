@@ -14,7 +14,12 @@ test_storage() {
   local storage_pool storage_volume
   storage_pool="incustest-$(basename "${INCUS_DIR}")-pool"
   storage_volume="${storage_pool}-vol"
-  incus storage create "$storage_pool" "$incus_backend" --description foo
+
+  if [ "${incus_backend}" = "truenas" ]; then
+       incus storage create "$storage_pool" "$incus_backend" "$(truenas_source)/" "$(truenas_api_key)" --description foo
+  else
+       incus storage create "$storage_pool" "$incus_backend" --description foo
+  fi
   incus storage show "$storage_pool" | grep -q 'description: foo'
   incus storage show "$storage_pool" | sed 's/^description:.*/description: bar/' | incus storage edit "$storage_pool"
   incus storage show "$storage_pool" | grep -q 'description: bar'
@@ -771,7 +776,7 @@ test_storage() {
   rootMinKiB2="18900"
   rootMaxKiB2="28000"
 
-  if [ "$incus_backend" != "dir" ]; then
+  if [ "$incus_backend" != "dir" ] && [ "$incus_backend" != "truenas" ]; then # truenas is currently limited to >= 1GiB sizes.
     incus launch testimage quota1
     rootOrigSizeKiB=$(incus exec quota1 -- df -P / | tail -n1 | awk '{print $2}')
     rootOrigMinSizeKiB=$((rootOrigSizeKiB-2000))
@@ -881,7 +886,11 @@ test_storage() {
   # shellcheck disable=SC2031,2269
   INCUS_DIR="${INCUS_DIR}"
   storage_pool="incustest-$(basename "${INCUS_DIR}")-pool26"
-  incus storage create "$storage_pool" "$incus_backend"
+  if [ "${incus_backend}" = "truenas" ]; then
+    incus storage create "$storage_pool" "$incus_backend" "$(truenas_source_uuid)" "$(truenas_api_key)"
+  else 
+    incus storage create "$storage_pool" "$incus_backend"
+  fi
   incus init -s "${storage_pool}" testimage c1
   # The storage pool will not be removed since it has c1 attached to it
   ! incus storage delete "${storage_pool}" || false
