@@ -189,7 +189,7 @@ EOF
     incus exec c1 --project test -- mount | grep /mnt
     incus exec c1 --project test -- grep -xF "hello world" /mnt/test.txt
 
-    # Check snashot can be restored.
+    # Check snapshot can be restored.
     incus snapshot restore c1 snap0
     incus info c1
     incus exec c1 --project test -- hostname
@@ -232,6 +232,12 @@ EOF
         poolExtraConfig="ceph.cluster_name=$(incus storage get "${poolName}" ceph.cluster_name)
 ceph.osd.pool_name=$(incus storage get "${poolName}" ceph.osd.pool_name)
 ceph.user.name=$(incus storage get "${poolName}" ceph.user.name)
+"
+      ;;
+      linstor)
+        poolExtraConfig="linstor.resource_group.place_count=$(incus storage get "${poolName}" linstor.resource_group.place_count)
+linstor.volume.prefix=$(incus storage get "${poolName}" linstor.volume.prefix)
+linstor.resource_group.name=$(incus storage get "${poolName}" linstor.resource_group.name)
 "
       ;;
     esac
@@ -292,8 +298,8 @@ test_bucket_recover() {
     poolDriver=$(incus storage show "${poolName}" | awk '/^driver:/ {print $2}')
     bucketName="bucket123"
 
-    # Skip ceph driver - ceph does not support storage buckets
-    if [ "${poolDriver}" = "ceph" ]; then
+    # Skip ceph and linstor drivers, as they do not support storage buckets
+    if [ "${poolDriver}" = "ceph" ] || [ "${poolDriver}" = "linstor" ]; then
       return 0
     fi
 
@@ -977,7 +983,7 @@ test_backup_export_import_recover() {
     incus import "${INCUS_DIR}/c1.tar.gz" c2
     rm "${INCUS_DIR}/c1.tar.gz"
 
-    # Remove imported instance enteries from database.
+    # Remove imported instance entries from database.
     incus admin sql global "delete from instances where name = 'c2'"
     incus admin sql global "delete from storage_volumes where name = 'c2'"
 

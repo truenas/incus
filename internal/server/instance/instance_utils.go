@@ -467,7 +467,7 @@ func LoadFromBackup(s *state.State, projectName string, instancePath string, app
 func DeviceNextInterfaceHWAddr() (string, error) {
 	// Generate a new random MAC address using the usual prefix
 	ret := bytes.Buffer{}
-	for _, c := range "00:16:3e:xx:xx:xx" {
+	for _, c := range "10:66:6a:xx:xx:xx" {
 		if c == 'x' {
 			c, err := rand.Int(rand.Reader, big.NewInt(16))
 			if err != nil {
@@ -578,7 +578,7 @@ func ResolveImage(ctx context.Context, tx *db.ClusterTx, projectName string, sou
 func SuitableArchitectures(ctx context.Context, s *state.State, tx *db.ClusterTx, projectName string, sourceInst *cluster.Instance, sourceImageRef string, req api.InstancesPost) ([]int, error) {
 	// Handle cases where the architecture is already provided.
 	if slices.Contains([]string{"migration", "none"}, req.Source.Type) && req.Architecture != "" {
-		id, err := osarch.ArchitectureId(req.Architecture)
+		id, err := osarch.ArchitectureID(req.Architecture)
 		if err != nil {
 			return nil, err
 		}
@@ -610,7 +610,7 @@ func SuitableArchitectures(ctx context.Context, s *state.State, tx *db.ClusterTx
 				return nil, err
 			}
 
-			id, err := osarch.ArchitectureId(img.Architecture)
+			id, err := osarch.ArchitectureID(img.Architecture)
 			if err != nil {
 				return nil, err
 			}
@@ -676,7 +676,7 @@ func SuitableArchitectures(ctx context.Context, s *state.State, tx *db.ClusterTx
 					return nil, err
 				}
 
-				id, err := osarch.ArchitectureId(img.Architecture)
+				id, err := osarch.ArchitectureID(img.Architecture)
 				if err != nil {
 					return nil, err
 				}
@@ -686,7 +686,7 @@ func SuitableArchitectures(ctx context.Context, s *state.State, tx *db.ClusterTx
 
 			architectures := []int{}
 			for arch := range entries {
-				id, err := osarch.ArchitectureId(arch)
+				id, err := osarch.ArchitectureID(arch)
 				if err != nil {
 					return nil, err
 				}
@@ -1197,7 +1197,7 @@ func SnapshotToProtobuf(snap *api.InstanceSnapshot) *migration.Snapshot {
 	}
 
 	isEphemeral := snap.Ephemeral
-	archID, _ := osarch.ArchitectureId(snap.Architecture)
+	archID, _ := osarch.ArchitectureID(snap.Architecture)
 	arch := int32(archID)
 	stateful := snap.Stateful
 	creationDate := snap.CreatedAt.UTC().Unix()

@@ -99,6 +99,7 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader) error {
 		"security.acls.default.egress.logged",
 		"boot.priority",
 		"vlan",
+		"io.bus",
 	}
 
 	// checkWithManagedNetwork validates the device's settings against the managed network.
@@ -681,6 +682,10 @@ func (d *nicBridged) Start() (*deviceConfig.RunConfig, error) {
 		{Key: "flags", Value: "up"},
 		{Key: "link", Value: peerName},
 		{Key: "hwaddr", Value: d.config["hwaddr"]},
+	}
+
+	if d.config["io.bus"] == "usb" {
+		runConf.UseUSBBus = true
 	}
 
 	if d.inst.Type() == instancetype.VM {
@@ -1321,7 +1326,7 @@ func (d *nicBridged) networkClearLease(name string, network string, hwaddr strin
 
 				if dstIPv4 == nil {
 					logger.Warnf("Failed to release DHCPv4 lease for instance %q, IP %q, MAC %q, %v", name, srcIP, srcMAC, "No server address found")
-					continue // Cant send release packet if no dstIP found.
+					continue // Can't send release packet if no dstIP found.
 				}
 
 				err = d.networkDHCPv4Release(srcMAC, srcIP, dstIPv4)
@@ -1340,12 +1345,12 @@ func (d *nicBridged) networkClearLease(name string, network string, hwaddr strin
 
 				if dstIPv6 == nil {
 					logger.Warnf("Failed to release DHCPv6 lease for instance %q, IP %q, DUID %q, IAID %q: %q", name, srcIP, DUID, IAID, "No server address found")
-					continue // Cant send release packet if no dstIP found.
+					continue // Can't send release packet if no dstIP found.
 				}
 
 				if dstDUID == "" {
 					errs = append(errs, fmt.Errorf("Failed to release DHCPv6 lease for instance %q, IP %q, DUID %q, IAID %q: %s", name, srcIP, DUID, IAID, "No server DUID found"))
-					continue // Cant send release packet if no dstDUID found.
+					continue // Can't send release packet if no dstDUID found.
 				}
 
 				err = d.networkDHCPv6Release(DUID, IAID, srcIP, dstIPv6, dstDUID)
@@ -1386,7 +1391,7 @@ func (d *nicBridged) networkDHCPv4Release(srcMAC net.HardwareAddr, srcIP net.IP,
 
 	defer func() { _ = conn.Close() }()
 
-	//Random DHCP transaction ID
+	// Random DHCP transaction ID
 	xid := rand.Uint32()
 
 	// Construct a DHCP packet pretending to be from the source IP and MAC supplied.
@@ -1443,13 +1448,13 @@ func (d *nicBridged) networkDHCPv6Release(srcDUID string, srcIAID string, srcIP 
 	}
 
 	// Convert Server DUID from string to byte array
-	dstDUIDRaw, err := hex.DecodeString(strings.Replace(dstDUID, ":", "", -1))
+	dstDUIDRaw, err := hex.DecodeString(strings.ReplaceAll(dstDUID, ":", ""))
 	if err != nil {
 		return err
 	}
 
 	// Convert DUID from string to byte array
-	srcDUIDRaw, err := hex.DecodeString(strings.Replace(srcDUID, ":", "", -1))
+	srcDUIDRaw, err := hex.DecodeString(strings.ReplaceAll(srcDUID, ":", ""))
 	if err != nil {
 		return err
 	}

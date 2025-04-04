@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -74,38 +73,19 @@ func (c *AdminClient) runClientCommand(ctx context.Context, workDir string, extr
 
 // writePolicy writes policy data to the file.
 func (c *AdminClient) writePolicy(policy []byte) error {
-	err := os.MkdirAll(c.policyDir(), 0755)
+	err := os.MkdirAll(c.policyDir(), 0o755)
 	if err != nil {
 		return err
 	}
 
 	policyPath := filepath.Join(c.policyDir(), c.alias)
 
-	err = os.WriteFile(policyPath, policy, 0644)
+	err = os.WriteFile(policyPath, policy, 0o644)
 	if err != nil {
 		return err
 	}
 
 	return nil
-}
-
-// isMinIOClient checks whether "mc" is the MinIO client binary or another software.
-func (c *AdminClient) isMinIOClient() bool {
-	out, err := c.runClientCommand(context.TODO(), "", "--version")
-	if err != nil {
-		return false
-	}
-
-	lines := strings.Split(out, "\n")
-	if len(lines) < 1 {
-		return false
-	}
-
-	if !strings.Contains(lines[0], "mc version") && !strings.Contains(lines[0], "mcli version") {
-		return false
-	}
-
-	return true
 }
 
 // ServiceStop stops the MinIO cluster.
@@ -249,7 +229,7 @@ func (c *AdminClient) UpdateServiceAccount(ctx context.Context, account, secretK
 func (c *AdminClient) ExportIAM(ctx context.Context) ([]byte, error) {
 	iamDir := filepath.Join(c.varPath, "mc", "iam", uuid.NewString())
 
-	err := os.MkdirAll(iamDir, 0755)
+	err := os.MkdirAll(iamDir, 0o755)
 	if err != nil {
 		return nil, err
 	}

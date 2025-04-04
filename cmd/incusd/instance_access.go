@@ -15,7 +15,7 @@ import (
 
 // swagger:operation GET /1.0/instances/{name}/access instances instance_access
 //
-//	Get who has access to an instnace
+//	Get who has access to an instance
 //
 //	Gets the access information for the instance.
 //
@@ -83,7 +83,6 @@ func instanceAccess(d *Daemon, r *http.Request) response.Response {
 	}
 
 	access, err := s.Authorizer.GetInstanceAccess(context.TODO(), projectName, mux.Vars(r)["name"])
-
 	if err != nil {
 		return response.InternalError(err)
 	}

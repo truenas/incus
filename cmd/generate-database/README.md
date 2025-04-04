@@ -35,6 +35,9 @@ This will initiate a call to `generate-database db mapper generate`,
 which will then search for `//generate-database:mapper` directives in the same file
 and process those.
 
+The following flags are available:
+* `--package` / `-p`: Package import paths to search for structs to parse. Defaults to the caller package. Can be used more than once.
+
 #### File
 
 Generally the first thing we will want to do for any newly generated file is to
@@ -47,7 +50,7 @@ ensure the file has been cleared of content:
 
 ### Generation Directive Arguments
 
-The generation directive aruments have the following form:
+The generation directive arguments have the following form:
 
 `//generate-database:mapper <command> flags <kind> <args...>`
 
@@ -83,6 +86,8 @@ Type                                  | Description
 :---                                  | :----
 `objects`                             | Creates a basic SELECT statement of the form `SELECT <columns> FROM <table> ORDER BY <columns>`.
 `objects-by-<FIELD>-and-<FIELD>...`   | Parses a pre-existing SELECT statement variable declaration of the form produced by`objects`, and appends a `WHERE` clause with the given fields located in the associated struct. Specifically looks for a variable declaration of the form `var <entity>Objects = RegisterStmt("SQL String")`
+`names`                               | Creates a basic SELECT statement of the form `SELECT <primary key> FROM <table> ORDER BY <primary key>`.
+`names-by-<FIELD>-and-<FIELD>...`     | Parses a pre-existing SELECT statement variable declaration of the form produced by`names`, and appends a `WHERE` clause with the given fields located in the associated struct. Specifically looks for a variable declaration of the form `var <entity>Objects = RegisterStmt("SQL String")`
 `create`                              | Creates a basic INSERT statement of the form `INSERT INTO <table> VALUES`.
 `create-or-replace`                   | Creates a basic INSERT statement of the form `INSERT OR REPLACE INTO <table> VALUES`.
 `delete-by-<FIELD>-and-<FIELD>...`    | Creates a DELETE statement of the form `DELETE FROM <table> WHERE <constraint>` where the constraint is based on the given fields of the associated struct.
@@ -114,7 +119,7 @@ Tag                         | Description
 `joinon=<table>.<column>`   | Overrides the default `JOIN ON` clause with the given table and column, replacing `<table>.<joinTable_id>` above.
 `primary=yes`               | Assigns column associated with the field to be sufficient for returning a row from the table. Will default to `Name` if unspecified. Fields with this key will be included in the default 'ORDER BY' clause.
 `omit=<Stmt Types>`         | Omits a given field from consideration for the comma separated list of statement types (`create`, `objects-by-Name`, `update`).
-`ignore=yes`                | Outright ignore the struct field as though it does not exist.
+`ignore`                    | Outright ignore the struct field as though it does not exist. `ignore` needs to be the only tag value in order to be recognized.
 `marshal=<yes/json>`        | Marshal/Unmarshal data into the field. The column must be a TEXT column. If `marshal=yes`, then the type must implement both `Marshal` and `Unmarshal`. If `marshal=json`, the type is marshaled to JSON using the standard library ([json.Marshal](https://pkg.go.dev/encoding/json#Marshal)). This works for entity tables only, and not for association or mapping tables.
 
 ### Go Function Generation
@@ -123,6 +128,7 @@ Go function generation supports the following types:
 
 Type                                | Description
 :---                                | :----
+`GetNames`                          | Return a slice of primary keys for all rows in a table matching the filter. Cannot be used with composite keys.
 `GetMany`                           | Return a slice of structs for all rows in a table matching the filter.
 `GetOne`                            | Return a single struct corresponding to a row with the given primary keys. Depends on `GetMany`.
 `ID`                                | Return the ID column from the table corresponding to the given primary keys.

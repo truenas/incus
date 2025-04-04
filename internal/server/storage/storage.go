@@ -83,13 +83,13 @@ func CreateContainerMountpoint(mountPoint string, mountPointSymlink string, priv
 
 	var err error
 	if !mntPointSymlinkTargetExist {
-		err = os.MkdirAll(mountPoint, 0711)
+		err = os.MkdirAll(mountPoint, 0o711)
 		if err != nil {
 			return err
 		}
 	}
 
-	err = os.Chmod(mountPoint, 0100)
+	err = os.Chmod(mountPoint, 0o100)
 	if err != nil {
 		return err
 	}
@@ -111,7 +111,7 @@ func CreateSnapshotMountpoint(snapshotMountpoint string, snapshotsSymlinkTarget 
 	mntPointSymlinkExist := util.PathExists(snapshotsSymlink)
 
 	if !snapshotMntPointExists {
-		err := os.MkdirAll(snapshotMountpoint, 0711)
+		err := os.MkdirAll(snapshotMountpoint, 0o711)
 		if err != nil {
 			return err
 		}
@@ -212,7 +212,7 @@ func UsedBy(ctx context.Context, s *state.State, pool Pool, firstOnly bool, memb
 		}
 
 		// Get all the profile devices.
-		profileDevices, err := cluster.GetDevices(ctx, tx.Tx(), "profile")
+		profileDevices, err := cluster.GetAllProfileDevices(ctx, tx.Tx())
 		if err != nil {
 			return fmt.Errorf("Failed loading profile devices: %w", err)
 		}

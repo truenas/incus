@@ -192,7 +192,7 @@ func (r *ProtocolIncus) GetMetrics() (string, error) {
 // ApplyServerPreseed configures a target Incus server with the provided server and cluster configuration.
 func (r *ProtocolIncus) ApplyServerPreseed(config api.InitPreseed) error {
 	// Apply server configuration.
-	if config.Server.Config != nil && len(config.Server.Config) > 0 {
+	if len(config.Server.Config) > 0 {
 		// Get current config.
 		server, etag, err := r.GetServer()
 		if err != nil {
@@ -211,7 +211,7 @@ func (r *ProtocolIncus) ApplyServerPreseed(config api.InitPreseed) error {
 	}
 
 	// Apply storage configuration.
-	if config.Server.StoragePools != nil && len(config.Server.StoragePools) > 0 {
+	if len(config.Server.StoragePools) > 0 {
 		// Get the list of storagePools.
 		storagePoolNames, err := r.GetStoragePoolNames()
 		if err != nil {
@@ -313,7 +313,7 @@ func (r *ProtocolIncus) ApplyServerPreseed(config api.InitPreseed) error {
 	// Apply networks in the default project before other projects config applied (so that if the projects
 	// depend on a network in the default project they can have their config applied successfully).
 	for i := range config.Server.Networks {
-		// Populate default project if not specified for backwards compatbility with earlier
+		// Populate default project if not specified for backwards compatibility with earlier
 		// preseed dump files.
 		if config.Server.Networks[i].Project == "" {
 			config.Server.Networks[i].Project = api.ProjectDefaultName
@@ -330,7 +330,7 @@ func (r *ProtocolIncus) ApplyServerPreseed(config api.InitPreseed) error {
 	}
 
 	// Apply project configuration.
-	if config.Server.Projects != nil && len(config.Server.Projects) > 0 {
+	if len(config.Server.Projects) > 0 {
 		// Get the list of projects.
 		projectNames, err := r.GetProjectNames()
 		if err != nil {
@@ -469,8 +469,7 @@ func (r *ProtocolIncus) ApplyServerPreseed(config api.InitPreseed) error {
 	}
 
 	// Apply profile configuration.
-	if config.Server.Profiles != nil && len(config.Server.Profiles) > 0 {
-
+	if len(config.Server.Profiles) > 0 {
 		// Apply profile configuration.
 		applyProfile := func(profile api.InitProfileProjectPost) error {
 			// Get the current profile.
@@ -535,7 +534,6 @@ func (r *ProtocolIncus) ApplyServerPreseed(config api.InitPreseed) error {
 			if err != nil {
 				return err
 			}
-
 		}
 	}
 

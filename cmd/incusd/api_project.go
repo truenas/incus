@@ -790,7 +790,6 @@ func projectChange(ctx context.Context, s *state.State, project *api.Project, re
 
 		return nil
 	})
-
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -1579,7 +1578,7 @@ func projectValidateConfig(s *state.State, config map[string]string) error {
 		// gendoc:generate(entity=project, group=restricted, key=restricted.containers.privilege)
 		// Possible values are `unprivileged`, `isolated`, and `allow`.
 		//
-		// - When set to `unpriviliged`, this option prevents setting {config:option}`instance-security:security.privileged` to `true`.
+		// - When set to `unprivileged`, this option prevents setting {config:option}`instance-security:security.privileged` to `true`.
 		// - When set to `isolated`, this option prevents setting {config:option}`instance-security:security.privileged` and {config:option}`instance-security:security.idmap.isolated` to `true`.
 		// - When set to `allow`, there is no restriction.
 		// ---
@@ -1971,7 +1970,6 @@ func projectAccess(d *Daemon, r *http.Request) response.Response {
 
 	// get the access struct
 	access, err := s.Authorizer.GetProjectAccess(context.TODO(), name)
-
 	if err != nil {
 		return response.InternalError(err)
 	}

@@ -205,7 +205,7 @@ func (g *Gateway) HandlerFuncs(heartbeatHandler HeartbeatHandler, trustedCerts f
 			return
 		}
 
-		// Handle heatbeats (these normally come from leader, but can come from joining nodes too).
+		// Handle heartbeats (these normally come from leader, but can come from joining nodes too).
 		if r.Method == "PUT" {
 			if g.shutdownCtx.Err() != nil {
 				logger.Warn("Rejecting heartbeat request as shutting down")
@@ -396,7 +396,7 @@ func (g *Gateway) DialFunc() client.DialFunc {
 		// leader is ourselves, and we were recently elected. In that case
 		// trigger a full heartbeat now: it will be a no-op if we aren't
 		// actually leaders.
-		go g.heartbeat(g.ctx, hearbeatInitial)
+		go g.heartbeat(g.ctx, heartbeatInitial)
 
 		return conn, nil
 	}
@@ -577,7 +577,7 @@ func (g *Gateway) Sync() {
 	dir := filepath.Join(g.db.Dir(), "global")
 	for _, file := range files {
 		path := filepath.Join(dir, file.Name)
-		err := os.WriteFile(path, file.Data, 0600)
+		err := os.WriteFile(path, file.Data, 0o600)
 		if err != nil {
 			logger.Warnf("Failed to dump database file %s: %v", file.Name, err)
 		}
@@ -1072,7 +1072,7 @@ func dqliteNetworkDial(ctx context.Context, name string, addr string, g *Gateway
 
 	err = request.Write(conn)
 	if err != nil {
-		return nil, fmt.Errorf("Failed sending HTTP requrest to %q: %w", request.URL, err)
+		return nil, fmt.Errorf("Failed sending HTTP request to %q: %w", request.URL, err)
 	}
 
 	response, err := http.ReadResponse(bufio.NewReader(conn), request)

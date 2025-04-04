@@ -11,7 +11,9 @@ test_container_move() {
 
   # Setup.
   incus project create "${project}"
-  if [ "$incus_backend" = "truenas" ]; then
+  if [ "${incus_backend}" = "linstor" ]; then
+      incus storage create "${pool2}" "${incus_backend}" linstor.resource_group.place_count=1
+  else if [ "$incus_backend" = "truenas" ]; then
     incus storage create "${pool2}" "${incus_backend}" "source=${INCUS_TN_HOST}:${INCUS_TN_DATASET}/$(uuidgen)" "truenas.api_key=${INCUS_TN_APIKEY}"
   else
     incus storage create "${pool2}" "${incus_backend}"

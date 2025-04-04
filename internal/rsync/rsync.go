@@ -64,7 +64,7 @@ func rsync(args ...string) (string, error) {
 
 // LocalCopy copies a directory using rsync (with the --devices option).
 func LocalCopy(source string, dest string, bwlimit string, xattrs bool, rsyncArgs ...string) (string, error) {
-	err := os.MkdirAll(dest, 0755)
+	err := os.MkdirAll(dest, 0o755)
 	if err != nil {
 		return "", err
 	}
@@ -184,7 +184,8 @@ func sendSetup(name string, path string, bwlimit string, execPath string, featur
 		path,
 		"localhost:/tmp/foo",
 		"-e",
-		rsyncCmd}...)
+		rsyncCmd,
+	}...)
 
 	cmd := exec.Command("rsync", args...)
 
@@ -459,7 +460,7 @@ func AtLeast(min string) bool {
 		return false
 	}
 
-	// Load minium version.
+	// Load minimum version.
 	minVer, err := version.NewDottedVersion(min)
 	if err != nil {
 		return false

@@ -8,6 +8,13 @@ import (
 	"fmt"
 )
 
+type tx interface { //nolint:unused
+	dbtx
+
+	Commit() error
+	Rollback() error
+}
+
 type dbtx interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
@@ -21,7 +28,7 @@ type preparer interface {
 
 // RegisterStmt register a SQL statement.
 //
-// Registered statements will be prepared upfront and re-used, to speed up
+// Registered statements will be prepared upfront and reused, to speed up
 // execution.
 //
 // Return a unique registration code.

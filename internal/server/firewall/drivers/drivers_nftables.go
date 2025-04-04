@@ -22,8 +22,10 @@ import (
 	"github.com/lxc/incus/v6/shared/validate"
 )
 
-const nftablesNamespace = "incus"
-const nftablesContentTemplate = "nftablesContent"
+const (
+	nftablesNamespace       = "incus"
+	nftablesContentTemplate = "nftablesContent"
+)
 
 // nftablesChainSeparator The "." character is specifically chosen here so as to prevent the ability for collisions
 // between project prefix (which is empty if project is default) and device name combinations that both are allowed
@@ -33,7 +35,7 @@ const nftablesChainSeparator = "."
 // nftablesMinVersion We need at least 0.9.1 as this was when the arp ether saddr filters were added.
 const nftablesMinVersion = "0.9.1"
 
-// Nftables is an implmentation of Incus firewall using nftables.
+// Nftables is an implementation of Incus firewall using nftables.
 type Nftables struct{}
 
 // String returns the driver name.

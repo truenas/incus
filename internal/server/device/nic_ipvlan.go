@@ -17,8 +17,10 @@ import (
 	"github.com/lxc/incus/v6/shared/validate"
 )
 
-const ipvlanModeL3S = "l3s"
-const ipvlanModeL2 = "l2"
+const (
+	ipvlanModeL3S = "l3s"
+	ipvlanModeL2  = "l2"
+)
 
 type nicIPVLAN struct {
 	deviceCommon
@@ -183,7 +185,7 @@ func (d *nicIPVLAN) validateEnvironment() error {
 
 		if sysctlVal != "1\n" {
 			// Replace . in parent name with / for sysctl formatting.
-			return fmt.Errorf("IPVLAN in L3S mode requires sysctl net.ipv4.conf.%s.forwarding=1", strings.Replace(effectiveParentName, ".", "/", -1))
+			return fmt.Errorf("IPVLAN in L3S mode requires sysctl net.ipv4.conf.%s.forwarding=1", strings.ReplaceAll(effectiveParentName, ".", "/"))
 		}
 	}
 
@@ -197,7 +199,7 @@ func (d *nicIPVLAN) validateEnvironment() error {
 
 		if sysctlVal != "1\n" {
 			// Replace . in parent name with / for sysctl formatting.
-			return fmt.Errorf("IPVLAN in L3S mode requires sysctl net.ipv6.conf.%s.forwarding=1", strings.Replace(effectiveParentName, ".", "/", -1))
+			return fmt.Errorf("IPVLAN in L3S mode requires sysctl net.ipv6.conf.%s.forwarding=1", strings.ReplaceAll(effectiveParentName, ".", "/"))
 		}
 
 		ipv6ProxyNdpPath := fmt.Sprintf("net/ipv6/conf/%s/proxy_ndp", effectiveParentName)
@@ -208,7 +210,7 @@ func (d *nicIPVLAN) validateEnvironment() error {
 
 		if sysctlVal != "1\n" {
 			// Replace . in parent name with / for sysctl formatting.
-			return fmt.Errorf("IPVLAN in L3S mode requires sysctl net.ipv6.conf.%s.proxy_ndp=1", strings.Replace(effectiveParentName, ".", "/", -1))
+			return fmt.Errorf("IPVLAN in L3S mode requires sysctl net.ipv6.conf.%s.proxy_ndp=1", strings.ReplaceAll(effectiveParentName, ".", "/"))
 		}
 	}
 

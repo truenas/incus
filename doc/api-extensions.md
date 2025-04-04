@@ -2695,29 +2695,83 @@ This adds support for device ACLs when attached to a bridged network.
 Add new memory dump API at `/1.0/instances/NAME/debug/memory`.
 
 ## `init_preseed_storage_volumes`
+
 This API extension provides the ability to configure storage volumes in preseed init.
 
 ## `init_preseed_profile_project`
+
 This API extension provides the ability to specify the project as part of profile definitions in preseed init.
 
 ## `instance_nic_routed_host_address`
+
 Adds support for specifying the VRF to add the routes to.
 
 ## `instance_smbios11`
+
 A new category of configuration options, `smbios11.XYZ` has been added
 which allows passing key/value pairs through `SMBIOS Type 11` on systems that
 support it.
 
 ## `api_filtering_extended`
+
 This extends the API filtering mechanism to all API collections.
 
 ## `acme_dns01`
+
 Adds support for `DNS-01` challenge to the Incus ACME support for certificate generation.
 
 ## `security_iommu`
+
 Introduce a new `security.iommu` configuration key to control whether to
 enable IOMMU emulation. This is done through `virtio_iommu` on Linux and the emulated Intel IOMMU on Windows.
 
 ## `network_ipv4_dhcp_routes`
+
 Introduces a new `ipv4.dhcp.routes` configuration option on bridged and OVN networks.
 This allows specifying pairs of CIDR networks and gateway address to be announced by the DHCP server.
+
+## `network_state_ovn_ls`
+
+Adds a new `LogicalSwitch` field to the `NetworkStateOVN` struct which is part of the `GET /1.0/networks/NAME/state` API.
+
+This is used to get the OVN logical switch name.
+
+## `network_dns_nameservers`
+
+Introduces the `dns.nameservers` configuration option on bridged and OVN networks.
+This allows specifying IPv4 and IPv6 DNS server addresses to be announced by the DHCP server and via Router Advertisements.
+
+## `acme_http01_port`
+
+Adds `acme.http.port` to control an alternative HTTP port for `HTTP-01` validation.
+
+## `network_ovn_ipv4_dhcp_expiry`
+
+Introduces `ipv4.dhcp.expiry` for OVN networks.
+
+## `instance_state_cpu_time`
+
+This adds an `allocated_time` field below `CPU` in the instance state API.
+
+## `network_io_bus`
+
+This introduces a new `io.bus` property for compatible network devices allowing to choose between `virtio` (default) and `usb`.
+
+## `disk_io_bus_usb`
+
+Adds a new `usb` value for `io.bus` on `disk` devices.
+
+## `storage_driver_linstor`
+
+This adds a LINSTOR storage driver.
+
+## `instance_oci_entrypoint`
+
+This introduces a set of new configuration options on the container to configure the OCI entry point:
+
+* `oci.entrypoint`
+* `oci.cwd`
+* `oci.uid`
+* `oci.gid`
+
+Those are initialized at creation time using the values from the OCI image.

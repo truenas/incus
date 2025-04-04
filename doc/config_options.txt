@@ -83,6 +83,7 @@ For block devices (disks), this is one of:
 - `nvme`
 - `virtio-blk`
 - `virtio-scsi` (default)
+- `usb`
 
 For file systems (shared directories or custom volumes), this is one of:
 - `9p`
@@ -131,7 +132,7 @@ For file systems (shared directories or custom volumes), this is one of:
 
 ```{config:option} path devices-disk
 :required: "yes"
-:shortdesc: "Path inside the instance where the disk will be mounted (only for containers)"
+:shortdesc: "Path inside the instance where the disk will be mounted (only for file system disk devices)"
 :type: "string"
 
 ```
@@ -664,6 +665,40 @@ The specified version expression is used to set `libnvidia-container NVIDIA_REQU
 ```
 
 <!-- config group instance-nvidia end -->
+<!-- config group instance-oci start -->
+```{config:option} oci.cwd instance-oci
+:condition: "OCI container"
+:liveupdate: "no"
+:shortdesc: "OCI container working directory"
+:type: "string"
+Override the working directory of an OCI container.
+```
+
+```{config:option} oci.entrypoint instance-oci
+:condition: "OCI container"
+:liveupdate: "no"
+:shortdesc: "OCI container entry point"
+:type: "string"
+Override the entry point of an OCI container.
+```
+
+```{config:option} oci.gid instance-oci
+:condition: "OCI container"
+:liveupdate: "no"
+:shortdesc: "OCI container GID"
+:type: "string"
+Override the GID of the process run in an OCI container.
+```
+
+```{config:option} oci.uid instance-oci
+:condition: "OCI container"
+:liveupdate: "no"
+:shortdesc: "OCI container UID"
+:type: "string"
+Override the UID of the process run in an OCI container.
+```
+
+<!-- config group instance-oci end -->
 <!-- config group instance-raw start -->
 ```{config:option} raw.apparmor instance-raw
 :liveupdate: "yes"
@@ -1458,6 +1493,12 @@ The instance generation UUID changes whenever the instance's place in time moves
 It is globally unique across all servers and projects.
 ```
 
+```{config:option} volatile.vm.definition instance-volatile
+:shortdesc: "QEMU VM definition name (used for migration between versions)"
+:type: "string"
+
+```
+
 ```{config:option} volatile.vsock_id instance-volatile
 :shortdesc: "Instance `vsock ID` used as of last start"
 :type: "string"
@@ -1857,7 +1898,7 @@ When set to `allow`, {config:option}`instance-security:security.nesting` can be 
 :type: "string"
 Possible values are `unprivileged`, `isolated`, and `allow`.
 
-- When set to `unpriviliged`, this option prevents setting {config:option}`instance-security:security.privileged` to `true`.
+- When set to `unprivileged`, this option prevents setting {config:option}`instance-security:security.privileged` to `true`.
 - When set to `isolated`, this option prevents setting {config:option}`instance-security:security.privileged` and {config:option}`instance-security:security.idmap.isolated` to `true`.
 - When set to `allow`, there is no restriction.
 ```
@@ -2095,6 +2136,14 @@ Possible values are `DNS-01` and `HTTP-01`.
 :shortdesc: "Email address used for the account registration"
 :type: "string"
 
+```
+
+```{config:option} acme.http.port server-acme
+:defaultdesc: "`:80`"
+:scope: "global"
+:shortdesc: "Port and interface for HTTP server (used by HTTP-01)"
+:type: "string"
+Set the port and interface to use for HTTP-01 based challenges to listen on
 ```
 
 ```{config:option} acme.provider server-acme
@@ -2586,6 +2635,41 @@ Specify the volume using the syntax `POOL/VOLUME`.
 :shortdesc: "Volume to use to store the image tarballs"
 :type: "string"
 Specify the volume using the syntax `POOL/VOLUME`.
+```
+
+```{config:option} storage.linstor.ca_cert server-miscellaneous
+:scope: "global"
+:shortdesc: "LINSTOR SSL certificate authority"
+:type: "string"
+
+```
+
+```{config:option} storage.linstor.client_cert server-miscellaneous
+:scope: "global"
+:shortdesc: "LINSTOR SSL client certificate"
+:type: "string"
+
+```
+
+```{config:option} storage.linstor.client_key server-miscellaneous
+:scope: "global"
+:shortdesc: "LINSTOR SSL client key"
+:type: "string"
+
+```
+
+```{config:option} storage.linstor.controller_connection server-miscellaneous
+:scope: "global"
+:shortdesc: "LINSTOR controller connection string"
+:type: "string"
+
+```
+
+```{config:option} storage.linstor.satellite.name server-miscellaneous
+:scope: "global"
+:shortdesc: "LINSTOR satellite node name override"
+:type: "string"
+Set this option to the name of the local LINSTOR satellite node, should it be different from the Incus server name.
 ```
 
 <!-- config group server-miscellaneous end -->

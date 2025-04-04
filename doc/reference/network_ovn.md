@@ -45,6 +45,7 @@ Key                                  | Type      | Condition             | Defau
 `bridge.external_interfaces`         | string    | -                     | -                         | Comma-separated list of unconfigured network interfaces to include in the bridge
 `bridge.hwaddr`                      | string    | -                     | -                         | MAC address for the bridge
 `bridge.mtu`                         | integer   | -                     | `1442`                    | Bridge MTU (default allows host to host Geneve tunnels)
+`dns.nameservers`                    | string    | -                     | Uplink DNS servers (IPv4 and IPv6 address if no uplink is configured) | DNS server IPs to advertise to DHCP clients and via Router Advertisements. Both IPv4 and IPv6 addresses get pushed via DHCP, and the first IPv6 address is also advertised as RDNSS via RA.
 `dns.domain`                         | string    | -                     | `incus`                   | Domain to advertise to DHCP clients and use for DNS resolution
 `dns.search`                         | string    | -                     | -                         | Full comma-separated domain search list, defaulting to `dns.domain` value
 `dns.zone.forward`                   | string    | -                     | -                         | Comma-separated list of DNS zone names for forward DNS records
@@ -52,6 +53,7 @@ Key                                  | Type      | Condition             | Defau
 `dns.zone.reverse.ipv6`              | string    | -                     | -                         | DNS zone name for IPv6 reverse DNS records
 `ipv4.address`                       | string    | standard mode         | - (initial value on creation: `auto`) | IPv4 address for the bridge (use `none` to turn off IPv4 or `auto` to generate a new random unused subnet) (CIDR)
 `ipv4.dhcp`                          | bool      | IPv4 address          | `true`                    | Whether to allocate addresses using DHCP
+`ipv4.dhcp.expiry`                   | string    | IPv4 DHCP             | `1h`                      | When to expire DHCP leases
 `ipv4.dhcp.routes`                   | string    | IPv4 DHCP             | -                         | Static routes to provide via DHCP option 121, as a comma-separated list of alternating subnets (CIDR) and gateway addresses (same syntax as dnsmasq and OVN)
 `ipv4.l3only`                        | bool      | IPv4 address          | `false`                   | Whether to enable layer 3 only mode.
 `ipv4.nat`                           | bool      | IPv4 address          | `false` (initial value on creation if `ipv4.address` is set to `auto`: `true`) | Whether to NAT

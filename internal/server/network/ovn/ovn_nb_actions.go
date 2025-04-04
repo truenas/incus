@@ -74,11 +74,13 @@ const OVNIPv6AddressModeDHCPStateful OVNIPv6AddressMode = "dhcpv6_stateful"
 const OVNIPv6AddressModeDHCPStateless OVNIPv6AddressMode = "dhcpv6_stateless"
 
 // OVN External ID names used by Incus.
-const ovnExtIDIncusSwitch = "incus_switch"
-const ovnExtIDIncusSwitchPort = "incus_switch_port"
-const ovnExtIDIncusProjectID = "incus_project_id"
-const ovnExtIDIncusPortGroup = "incus_port_group"
-const ovnExtIDIncusLocation = "incus_location"
+const (
+	ovnExtIDIncusSwitch     = "incus_switch"
+	ovnExtIDIncusSwitchPort = "incus_switch_port"
+	ovnExtIDIncusProjectID  = "incus_project_id"
+	ovnExtIDIncusPortGroup  = "incus_port_group"
+	ovnExtIDIncusLocation   = "incus_location"
+)
 
 // OVNIPv6RAOpts IPv6 router advertisements options that can be applied to a router.
 type OVNIPv6RAOpts struct {
@@ -118,7 +120,7 @@ type OVNDHCPv6Opts struct {
 	DNSSearchList      []string
 }
 
-// OVNSwitchPortOpts options that can be applied to a swich port.
+// OVNSwitchPortOpts options that can be applied to a switch port.
 type OVNSwitchPortOpts struct {
 	MAC          net.HardwareAddr   // Optional, if nil will be set to dynamic.
 	IPV4         string             // Optional, if empty, allocate an address, if "none" then disable allocation.
@@ -456,7 +458,6 @@ func (o *NB) DeleteLogicalRouterNAT(ctx context.Context, routerName OVNRouter, n
 			Mutator: ovsdb.MutateOperationDelete,
 			Value:   []string{natRule.UUID},
 		})
-
 		if err != nil {
 			return err
 		}
@@ -509,6 +510,7 @@ func (o *NB) CreateLogicalRouterRoute(ctx context.Context, routerName OVNRouter,
 	operations := []ovsdb.Operation{}
 	for i, route := range routes {
 		// Check if already present.
+		exists := false
 		for _, existing := range existingRoutes {
 			if existing.IPPrefix != route.Prefix.String() {
 				continue
@@ -531,10 +533,16 @@ func (o *NB) CreateLogicalRouterRoute(ctx context.Context, routerName OVNRouter,
 			}
 
 			if mayExist {
-				continue
+				exists = true
+				break
 			}
 
 			return ErrExists
+		}
+
+		// Don't add duplicate entries.
+		if exists {
+			continue
 		}
 
 		// Create the new record.
@@ -1255,14 +1263,18 @@ func (o *NB) UpdateLogicalSwitchDHCPv4Options(ctx context.Context, switchName OV
 
 	if opts.Router != nil {
 		dhcpOption.Options["router"] = opts.Router.String()
+	} else {
+		delete(dhcpOption.Options, "router")
 	}
 
 	if len(opts.DNSSearchList) > 0 {
 		// Special quoting to allow domain names.
 		dhcpOption.Options["domain_search_list"] = fmt.Sprintf(`"%s"`, strings.Join(opts.DNSSearchList, ","))
+	} else {
+		delete(dhcpOption.Options, "domain_search_list")
 	}
 
-	if opts.RecursiveDNSServer != nil {
+	if len(opts.RecursiveDNSServer) > 0 {
 		nsIPs := make([]string, 0, len(opts.RecursiveDNSServer))
 		for _, nsIP := range opts.RecursiveDNSServer {
 			if nsIP.To4() == nil {
@@ -1273,19 +1285,27 @@ func (o *NB) UpdateLogicalSwitchDHCPv4Options(ctx context.Context, switchName OV
 		}
 
 		dhcpOption.Options["dns_server"] = fmt.Sprintf("{%s}", strings.Join(nsIPs, ","))
+	} else {
+		delete(dhcpOption.Options, "dns_server")
 	}
 
 	if opts.DomainName != "" {
 		// Special quoting to allow domain names.
 		dhcpOption.Options["domain_name"] = fmt.Sprintf(`"%s"`, opts.DomainName)
+	} else {
+		delete(dhcpOption.Options, "domain_name")
 	}
 
 	if opts.MTU > 0 {
 		dhcpOption.Options["mtu"] = fmt.Sprintf("%d", opts.MTU)
+	} else {
+		delete(dhcpOption.Options, "mtu")
 	}
 
 	if opts.Netmask != "" {
 		dhcpOption.Options["netmask"] = opts.Netmask
+	} else {
+		delete(dhcpOption.Options, "netmask")
 	}
 
 	if opts.StaticRoutes != "" {
@@ -1357,6 +1377,8 @@ func (o *NB) UpdateLogicalSwitchDHCPv6Options(ctx context.Context, switchName OV
 	if len(opts.DNSSearchList) > 0 {
 		// Special quoting to allow domain names.
 		dhcpOption.Options["domain_search"] = fmt.Sprintf(`"%s"`, strings.Join(opts.DNSSearchList, ","))
+	} else {
+		delete(dhcpOption.Options, "domain_search")
 	}
 
 	if opts.RecursiveDNSServer != nil {
@@ -1370,6 +1392,8 @@ func (o *NB) UpdateLogicalSwitchDHCPv6Options(ctx context.Context, switchName OV
 		}
 
 		dhcpOption.Options["dns_server"] = fmt.Sprintf("{%s}", strings.Join(nsIPs, ","))
+	} else {
+		delete(dhcpOption.Options, "dns_server")
 	}
 
 	// Prepare the changes.
@@ -1794,7 +1818,7 @@ func (o *NB) GetLogicalSwitchPortIPs(ctx context.Context, portName OVNSwitchPort
 	return addresses, nil
 }
 
-// GetLogicalSwitchPortDynamicIPs returns a list of dynamc IPs for a switch port.
+// GetLogicalSwitchPortDynamicIPs returns a list of dynamic IPs for a switch port.
 func (o *NB) GetLogicalSwitchPortDynamicIPs(ctx context.Context, portName OVNSwitchPort) ([]net.IP, error) {
 	lsp := &ovnNB.LogicalSwitchPort{
 		Name: string(portName),
@@ -1844,6 +1868,48 @@ func (o *NB) GetLogicalSwitchPortLocation(ctx context.Context, portName OVNSwitc
 	}
 
 	return val, nil
+}
+
+// UpdateLogicalSwitchPortDHCP updates the DHCP options on the logical switch port.
+func (o *NB) UpdateLogicalSwitchPortDHCP(ctx context.Context, portName OVNSwitchPort, dhcpV4UUID OVNDHCPOptionsUUID, dhcpV6UUID OVNDHCPOptionsUUID) error {
+	// Get the logical switch port.
+	lsp := ovnNB.LogicalSwitchPort{
+		Name: string(portName),
+	}
+
+	err := o.get(ctx, &lsp)
+	if err != nil {
+		return err
+	}
+
+	if dhcpV4UUID != "" {
+		dhcp4opts := string(dhcpV4UUID)
+		lsp.Dhcpv4Options = &dhcp4opts
+	}
+
+	if dhcpV6UUID != "" {
+		dhcp6opts := string(dhcpV6UUID)
+		lsp.Dhcpv6Options = &dhcp6opts
+	}
+
+	// Update the record.
+	operations, err := o.client.Where(&lsp).Update(&lsp)
+	if err != nil {
+		return err
+	}
+
+	// Apply the changes.
+	resp, err := o.client.Transact(ctx, operations...)
+	if err != nil {
+		return err
+	}
+
+	_, err = ovsdb.CheckOperationResults(resp, operations)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // UpdateLogicalSwitchPortOptions sets the options for a logical switch port.

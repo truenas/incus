@@ -118,7 +118,9 @@ func (suite *containerTestSuite) TestContainer_ProfilesOverwriteDefaultNic() {
 			"eth0": deviceConfig.Device{
 				"type":    "nic",
 				"nictype": "bridged",
-				"parent":  "unknownbr0"}},
+				"parent":  "unknownbr0",
+			},
+		},
 		Name: "testFoo",
 	}
 
@@ -155,7 +157,9 @@ func (suite *containerTestSuite) TestContainer_LoadFromDB() {
 			"eth0": deviceConfig.Device{
 				"type":    "nic",
 				"nictype": "bridged",
-				"parent":  "unknownbr0"}},
+				"parent":  "unknownbr0",
+			},
+		},
 		Name: "testFoo",
 	}
 
@@ -204,7 +208,7 @@ func (suite *containerTestSuite) TestContainer_LoadFromDB() {
 	suite.Exactly(
 		apiC1,
 		apiC2,
-		"The loaded container isn't excactly the same as the created one.",
+		"The loaded container isn't exactly the same as the created one.",
 	)
 }
 
@@ -257,10 +261,16 @@ func (suite *containerTestSuite) TestContainer_IsPrivileged_Privileged() {
 }
 
 func (suite *containerTestSuite) TestContainer_AddRoutedNicValidation() {
-	eth0 := deviceConfig.Device{"name": "eth0", "type": "nic", "ipv4.gateway": "none",
-		"ipv6.gateway": "none", "nictype": "routed", "parent": "unknownbr0"}
-	eth1 := deviceConfig.Device{"name": "eth1", "type": "nic", "ipv4.gateway": "none",
-		"ipv6.gateway": "none", "nictype": "routed", "parent": "unknownbr0"}
+	eth0 := deviceConfig.Device{
+		"name": "eth0", "type": "nic", "ipv4.gateway": "none",
+		"ipv6.gateway": "none", "nictype": "routed", "parent": "unknownbr0",
+	}
+
+	eth1 := deviceConfig.Device{
+		"name": "eth1", "type": "nic", "ipv4.gateway": "none",
+		"ipv6.gateway": "none", "nictype": "routed", "parent": "unknownbr0",
+	}
+
 	eth2 := deviceConfig.Device{"name": "eth2", "type": "nic", "nictype": "bridged", "parent": "unknownbr0"}
 
 	var testProfiles []api.Profile
