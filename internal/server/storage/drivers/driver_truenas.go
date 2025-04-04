@@ -417,7 +417,10 @@ func (d *truenas) GetResources() (*api.ResourcesStoragePool, error) {
 }
 
 // MigrationType returns the type of transfer methods to be used when doing migrations between pools in preference order.
-func (d *truenas) MigrationTypes(contentType ContentType, refresh bool, copySnapshots bool) []localMigration.Type {
+func (d *truenas) MigrationTypes(contentType ContentType, refresh bool, copySnapshots bool, clusterMove bool, storageMove bool) []localMigration.Type {
+
+	// TODO: investigate "storageMove" that came from the linstor driver.
+
 	var rsyncFeatures []string
 
 	// Do not pass compression argument to rsync if the associated

@@ -45,8 +45,10 @@ import (
 )
 
 // Track last autorestart of an instance.
-var instancesLastRestart = map[int][10]time.Time{}
-var muInstancesLastRestart sync.Mutex
+var (
+	instancesLastRestart   = map[int][10]time.Time{}
+	muInstancesLastRestart sync.Mutex
+)
 
 // ErrExecCommandNotFound indicates the command is not found.
 var ErrExecCommandNotFound = api.StatusErrorf(http.StatusBadRequest, "Command not found")
@@ -600,7 +602,8 @@ func (d *common) restartCommon(inst instance.Instance, timeout time.Duration) er
 		"created":   d.creationDate,
 		"ephemeral": ephemeral,
 		"used":      d.lastUsedDate,
-		"timeout":   timeout}
+		"timeout":   timeout,
+	}
 
 	d.logger.Info("Restarting instance", ctxMap)
 
@@ -651,8 +654,13 @@ func (d *common) restartCommon(inst instance.Instance, timeout time.Duration) er
 	}
 
 	// Setup a new operation for the start phase.
-	op, err = operationlock.Create(d.Project().Name, d.Name(), d.op, operationlock.ActionRestart, true, true)
+	op, err = operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionRestart, nil, true, false)
 	if err != nil {
+		if errors.Is(err, operationlock.ErrNonReusuableSucceeded) {
+			// An existing matching operation has now succeeded, return.
+			return nil
+		}
+
 		return fmt.Errorf("Create restart (for start) operation: %w", err)
 	}
 
@@ -752,7 +760,7 @@ func (d *common) runHooks(hooks []func() error) error {
 	return nil
 }
 
-// snapshot handles the common part of the snapshoting process.
+// snapshot handles the common part of the snapshotting process.
 func (d *common) snapshotCommon(inst instance.Instance, name string, expiry time.Time, stateful bool) error {
 	revert := revert.New()
 	defer revert.Fail()
@@ -1203,7 +1211,7 @@ func (d *common) deviceLoad(inst instance.Instance, deviceName string, rawConfig
 			return nil, err
 		}
 	} else {
-		// Othewise copy the config so it cannot be modified by device.
+		// Otherwise copy the config so it cannot be modified by device.
 		configCopy = rawConfig.Clone()
 	}
 
@@ -1594,6 +1602,10 @@ func (d *common) balanceNUMANodes() error {
 
 // Gets the process starting time.
 func (d *common) processStartedAt(pid int) (time.Time, error) {
+	if pid < 1 {
+		return time.Time{}, fmt.Errorf("Invalid PID %q", pid)
+	}
+
 	file, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
 	if err != nil {
 		return time.Time{}, err

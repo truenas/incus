@@ -206,6 +206,7 @@ func (n *bridge) Validate(config map[string]string) error {
 		"ipv6.routes":                          validate.Optional(validate.IsListOf(validate.IsNetworkV6)),
 		"ipv6.routing":                         validate.Optional(validate.IsBool),
 		"ipv6.ovn.ranges":                      validate.Optional(validate.IsListOf(validate.IsNetworkRangeV6)),
+		"dns.nameservers":                      validate.Optional(validate.IsListOf(validate.IsNetworkAddress)),
 		"dns.domain":                           validate.IsAny,
 		"dns.mode":                             validate.Optional(validate.IsOneOf("dynamic", "managed", "none")),
 		"dns.search":                           validate.IsAny,
@@ -274,7 +275,7 @@ func (n *bridge) Validate(config map[string]string) error {
 		return err
 	}
 
-	// Peform composite key checks after per-key validation.
+	// Perform composite key checks after per-key validation.
 
 	// Validate DNS zone names.
 	err = n.validateZoneNames(config)
@@ -512,7 +513,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 	// Create directory.
 	if !util.PathExists(internalUtil.VarPath("networks", n.name)) {
-		err := os.MkdirAll(internalUtil.VarPath("networks", n.name), 0711)
+		err := os.MkdirAll(internalUtil.VarPath("networks", n.name), 0o711)
 		if err != nil {
 			return err
 		}
@@ -869,11 +870,13 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 	// Start building process using subprocess package.
 	command := "dnsmasq"
-	dnsmasqCmd := []string{"--keep-in-foreground", "--strict-order", "--bind-interfaces",
+	dnsmasqCmd := []string{
+		"--keep-in-foreground", "--strict-order", "--bind-interfaces",
 		"--except-interface=lo",
 		"--pid-file=", // Disable attempt at writing a PID file.
 		"--no-ping",   // --no-ping is very important to prevent delays to lease file updates.
-		fmt.Sprintf("--interface=%s", n.name)}
+		fmt.Sprintf("--interface=%s", n.name),
+	}
 
 	dnsmasqVersion, err := dnsmasq.GetVersion()
 	if err != nil {
@@ -901,6 +904,16 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 		}
 	}
 
+	var dnsIPv4 []string
+	var dnsIPv6 []string
+	for _, s := range util.SplitNTrimSpace(n.config["dns.nameservers"], ",", -1, false) {
+		if net.ParseIP(s).To4() != nil {
+			dnsIPv4 = append(dnsIPv4, s)
+		} else {
+			dnsIPv6 = append(dnsIPv6, s)
+		}
+	}
+
 	// Configure IPv4.
 	if !util.IsNoneOrEmpty(n.config["ipv4.address"]) {
 		// Parse the subnet.
@@ -920,6 +933,14 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 				dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--dhcp-option-force=3,%s", n.config["ipv4.dhcp.gateway"]))
 			}
 
+			if n.config["dns.nameservers"] != "" {
+				if len(dnsIPv4) == 0 {
+					dnsmasqCmd = append(dnsmasqCmd, "--dhcp-option-force=6")
+				} else {
+					dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--dhcp-option-force=6,%s", strings.Join(dnsIPv4, ",")))
+				}
+			}
+
 			if bridge.MTU != bridgeMTUDefault {
 				dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--dhcp-option-force=26,%d", bridge.MTU))
 			}
@@ -930,7 +951,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 			}
 
 			if n.config["ipv4.dhcp.routes"] != "" {
-				dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--dhcp-option-force=121,%s", strings.Replace(n.config["ipv4.dhcp.routes"], " ", "", -1)))
+				dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--dhcp-option-force=121,%s", strings.ReplaceAll(n.config["ipv4.dhcp.routes"], " ", "")))
 			}
 
 			expiry := "1h"
@@ -941,7 +962,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 			if n.config["ipv4.dhcp.ranges"] != "" {
 				for _, dhcpRange := range strings.Split(n.config["ipv4.dhcp.ranges"], ",") {
 					dhcpRange = strings.TrimSpace(dhcpRange)
-					dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%s", strings.Replace(dhcpRange, "-", ",", -1), expiry)}...)
+					dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%s", strings.ReplaceAll(dhcpRange, "-", ","), expiry)}...)
 				}
 			} else {
 				dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%s,%s", dhcpalloc.GetIP(subnet, 2).String(), dhcpalloc.GetIP(subnet, -2).String(), expiry)}...)
@@ -962,7 +983,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 		// Configure NAT.
 		if util.IsTrue(n.config["ipv4.nat"]) {
-			//If a SNAT source address is specified, use that, otherwise default to MASQUERADE mode.
+			// If a SNAT source address is specified, use that, otherwise default to MASQUERADE mode.
 			var srcIP net.IP
 			if n.config["ipv4.nat.address"] != "" {
 				srcIP = net.ParseIP(n.config["ipv4.nat.address"])
@@ -1083,7 +1104,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 				if n.config["ipv6.dhcp.ranges"] != "" {
 					for _, dhcpRange := range strings.Split(n.config["ipv6.dhcp.ranges"], ",") {
 						dhcpRange = strings.TrimSpace(dhcpRange)
-						dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%d,%s", strings.Replace(dhcpRange, "-", ",", -1), subnetSize, expiry)}...)
+						dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%d,%s", strings.ReplaceAll(dhcpRange, "-", ","), subnetSize, expiry)}...)
 					}
 				} else {
 					dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%s,%d,%s", dhcpalloc.GetIP(subnet, 2), dhcpalloc.GetIP(subnet, -1), subnetSize, expiry)}...)
@@ -1093,6 +1114,14 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 			}
 		} else {
 			dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("::,constructor:%s,ra-only", n.name)}...)
+		}
+
+		if n.config["dns.nameservers"] != "" {
+			if len(dnsIPv6) == 0 {
+				dnsmasqCmd = append(dnsmasqCmd, "--dhcp-option-force=option6:dns-server")
+			} else {
+				dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--dhcp-option-force=option6:dns-server,[%s]", strings.Join(dnsIPv6, ",")))
+			}
 		}
 
 		// Allow forwarding.
@@ -1151,7 +1180,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 		// Configure NAT.
 		if util.IsTrue(n.config["ipv6.nat"]) {
-			//If a SNAT source address is specified, use that, otherwise default to MASQUERADE mode.
+			// If a SNAT source address is specified, use that, otherwise default to MASQUERADE mode.
 			var srcIP net.IP
 			if n.config["ipv6.nat.address"] != "" {
 				srcIP = net.ParseIP(n.config["ipv6.nat.address"])
@@ -1334,7 +1363,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 		}
 
 		// Create a config file to contain additional config (and to prevent dnsmasq from reading /etc/dnsmasq.conf)
-		err = os.WriteFile(internalUtil.VarPath("networks", n.name, "dnsmasq.raw"), []byte(fmt.Sprintf("%s\n", n.config["raw.dnsmasq"])), 0644)
+		err = os.WriteFile(internalUtil.VarPath("networks", n.name, "dnsmasq.raw"), []byte(fmt.Sprintf("%s\n", n.config["raw.dnsmasq"])), 0o644)
 		if err != nil {
 			return err
 		}
@@ -1352,7 +1381,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 		// Create DHCP hosts directory.
 		if !util.PathExists(internalUtil.VarPath("networks", n.name, "dnsmasq.hosts")) {
-			err = os.MkdirAll(internalUtil.VarPath("networks", n.name, "dnsmasq.hosts"), 0755)
+			err = os.MkdirAll(internalUtil.VarPath("networks", n.name, "dnsmasq.hosts"), 0o755)
 			if err != nil {
 				return err
 			}

@@ -18,7 +18,9 @@ test_storage_volume_snapshots() {
   storage_pool2="${storage_pool}2"
   storage_volume="${storage_pool}-vol"
 
-  if [ "${incus_backend}" = "truenas" ]; then
+  if [ "${incus_backend}" = "linstor" ]; then
+      incus storage create "$storage_pool" "$incus_backend" linstor.resource_group.place_count=1
+  else if [ "${incus_backend}" = "truenas" ]; then
     incus storage create "$storage_pool" "$incus_backend" "$(truenas_source)/" "$(truenas_api_key)"
   else
     incus storage create "$storage_pool" "$incus_backend"

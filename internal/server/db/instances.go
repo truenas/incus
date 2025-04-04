@@ -536,13 +536,13 @@ func (c *ClusterTx) instanceProfilesFill(ctx context.Context, snapshotsMode bool
 	}
 
 	// Get all the profile configs.
-	profileConfigs, err := cluster.GetConfig(context.TODO(), c.Tx(), "profile")
+	profileConfigs, err := cluster.GetAllProfileConfigs(context.TODO(), c.Tx())
 	if err != nil {
 		return fmt.Errorf("Failed loading profile configs: %w", err)
 	}
 
 	// Get all the profile devices.
-	profileDevices, err := cluster.GetDevices(context.TODO(), c.Tx(), "profile")
+	profileDevices, err := cluster.GetAllProfileDevices(context.TODO(), c.Tx())
 	if err != nil {
 		return fmt.Errorf("Failed loading profile devices: %w", err)
 	}
@@ -1084,7 +1084,8 @@ func CreateInstanceConfig(ctx context.Context, tx *sql.Tx, id int, config map[st
 // UpdateInstance updates the description, architecture and ephemeral flag of
 // the instance with the given ID.
 func UpdateInstance(tx *sql.Tx, id int, description string, architecture int, ephemeral bool,
-	expiryDate time.Time) error {
+	expiryDate time.Time,
+) error {
 	str := "UPDATE instances SET description=?, architecture=?, ephemeral=?, expiry_date=? WHERE id=?"
 	ephemeralInt := 0
 	if ephemeral {

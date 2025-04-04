@@ -24,8 +24,10 @@ import (
 
 var debug bool
 
-var operationsLock sync.Mutex
-var operations = make(map[string]*Operation)
+var (
+	operationsLock sync.Mutex
+	operations     = make(map[string]*Operation)
+)
 
 // OperationClass represents the OperationClass type.
 type OperationClass int
@@ -113,7 +115,7 @@ type Operation struct {
 	// Indicates if operation has finished.
 	finished *cancel.Canceller
 
-	// Locking for concurent access to the Operation
+	// Locking for concurrent access to the Operation
 	lock sync.Mutex
 
 	state  *state.State

@@ -94,7 +94,7 @@ ifneq "$(INCUS_OFFLINE)" ""
 	exit 1
 endif
 	$(GO) get -t -v -u ./...
-	$(GO) mod tidy --go=1.23.0
+	$(GO) mod tidy --go=1.23.7
 	$(GO) get toolchain@none
 
 	@echo "Dependencies updated"
@@ -129,7 +129,7 @@ update-protobuf:
 update-schema:
 	cd cmd/generate-database && $(GO) build -o $(GOPATH)/bin/generate-database -tags "$(TAG_SQLITE3)" $(DEBUG) && cd -
 	$(GO) generate ./...
-	gofmt -s -w ./internal/server/db/
+	gofumpt -w ./internal/server/db/
 	goimports -w ./internal/server/db/
 	@echo "Code generation completed"
 
@@ -306,6 +306,10 @@ else
 endif
 ifeq ($(shell command -v flake8),)
 	echo "Please install flake8"
+	exit 1
+endif
+ifeq ($(shell command -v codespell),)
+	echo "Please install codespell"
 	exit 1
 endif
 	flake8 test/deps/import-busybox

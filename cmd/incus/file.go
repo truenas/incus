@@ -35,9 +35,9 @@ import (
 
 const (
 	// DirMode represents the file mode for creating dirs on `incus file pull/push`.
-	DirMode = 0755
+	DirMode = 0o755
 	// FileMode represents the file mode for creating files on `incus file create`.
-	FileMode = 0644
+	FileMode = 0o644
 )
 
 type cmdFile struct {
@@ -51,6 +51,7 @@ type cmdFile struct {
 	flagRecursive bool
 }
 
+// Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdFile) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("file")
@@ -84,7 +85,7 @@ func (c *cmdFile) Command() *cobra.Command {
 
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs
-	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }
+	cmd.Run = func(cmd *cobra.Command, _ []string) { _ = cmd.Usage() }
 	return cmd
 }
 
@@ -119,7 +120,7 @@ incus file create --type=symlink foo/bar baz
 
 	cmd.RunE = c.Run
 
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return c.global.cmpFiles(toComplete, false)
 		}
@@ -133,7 +134,7 @@ incus file create --type=symlink foo/bar baz
 // Run runs the `file create` command.
 func (c *cmdFileCreate) Run(cmd *cobra.Command, args []string) error {
 	// Quick checks.
-	exit, err := c.global.CheckArgs(cmd, args, 1, 2)
+	exit, err := c.global.checkArgs(cmd, args, 1, 2)
 	if exit {
 		return err
 	}
@@ -143,7 +144,7 @@ func (c *cmdFileCreate) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(args) == 2 && c.flagType != "symlink" {
-		return fmt.Errorf(i18n.G(`Symlink target path can only be used for type "symlink"`))
+		return errors.New(i18n.G(`Symlink target path can only be used for type "symlink"`))
 	}
 
 	if strings.HasSuffix(args[0], "/") {
@@ -157,7 +158,7 @@ func (c *cmdFileCreate) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse remote.
-	resources, err := c.global.ParseServers(pathSpec[0])
+	resources, err := c.global.parseServers(pathSpec[0])
 	if err != nil {
 		return err
 	}
@@ -202,9 +203,10 @@ func (c *cmdFileCreate) Run(cmd *cobra.Command, args []string) error {
 	var mode os.FileMode
 
 	// Determine the target mode
-	if c.flagType == "directory" {
+	switch c.flagType {
+	case "directory":
 		mode = os.FileMode(DirMode)
-	} else if c.flagType == "file" {
+	case "file":
 		mode = os.FileMode(FileMode)
 	}
 
@@ -233,11 +235,12 @@ func (c *cmdFileCreate) Run(cmd *cobra.Command, args []string) error {
 	var readCloser io.ReadCloser
 	var contentLength int64
 
-	if c.flagType == "symlink" {
+	switch c.flagType {
+	case "symlink":
 		content = strings.NewReader(symlinkTargetPath)
 		readCloser = io.NopCloser(content)
 		contentLength = int64(len(symlinkTargetPath))
-	} else if c.flagType == "file" {
+	case "file":
 		// Just creating an empty file.
 		content = strings.NewReader("")
 		readCloser = io.NopCloser(content)
@@ -294,6 +297,7 @@ type cmdFileDelete struct {
 	flagForce bool
 }
 
+// Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdFileDelete) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("delete", i18n.G("[<remote>:]<instance>/<path> [[<remote>:]<instance>/<path>...]"))
@@ -306,22 +310,23 @@ func (c *cmdFileDelete) Command() *cobra.Command {
 
 	cmd.RunE = c.Run
 
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cmd.ValidArgsFunction = func(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return c.global.cmpFiles(toComplete, false)
 	}
 
 	return cmd
 }
 
+// Run runs the actual command logic.
 func (c *cmdFileDelete) Run(cmd *cobra.Command, args []string) error {
 	// Quick checks.
-	exit, err := c.global.CheckArgs(cmd, args, 1, -1)
+	exit, err := c.global.checkArgs(cmd, args, 1, -1)
 	if exit {
 		return err
 	}
 
 	// Parse remote
-	resources, err := c.global.ParseServers(args...)
+	resources, err := c.global.parseServers(args...)
 	if err != nil {
 		return err
 	}
@@ -377,6 +382,7 @@ type cmdFileEdit struct {
 	filePush *cmdFilePush
 }
 
+// Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdFileEdit) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("edit", i18n.G("[<remote>:]<instance>/<path>"))
@@ -386,7 +392,7 @@ func (c *cmdFileEdit) Command() *cobra.Command {
 
 	cmd.RunE = c.Run
 
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return c.global.cmpFiles(toComplete, false)
 		}
@@ -397,11 +403,12 @@ func (c *cmdFileEdit) Command() *cobra.Command {
 	return cmd
 }
 
+// Run runs the actual command logic.
 func (c *cmdFileEdit) Run(cmd *cobra.Command, args []string) error {
 	c.filePush.noModeChange = true
 
 	// Quick checks.
-	exit, err := c.global.CheckArgs(cmd, args, 1, 1)
+	exit, err := c.global.checkArgs(cmd, args, 1, 1)
 	if exit {
 		return err
 	}
@@ -455,6 +462,7 @@ type cmdFilePull struct {
 	edit bool
 }
 
+// Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdFilePull) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("pull", i18n.G("[<remote>:]<instance>/<path> [[<remote>:]<instance>/<path>...] <target path>"))
@@ -470,7 +478,7 @@ func (c *cmdFilePull) Command() *cobra.Command {
 
 	cmd.RunE = c.Run
 
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return c.global.cmpFiles(toComplete, false)
 		}
@@ -481,9 +489,10 @@ func (c *cmdFilePull) Command() *cobra.Command {
 	return cmd
 }
 
+// Run runs the actual command logic.
 func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 	// Quick checks.
-	exit, err := c.global.CheckArgs(cmd, args, 2, -1)
+	exit, err := c.global.checkArgs(cmd, args, 2, -1)
 	if exit {
 		return err
 	}
@@ -510,7 +519,7 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 	if err == nil {
 		targetIsDir = targetInfo.IsDir()
 		if !targetIsDir && len(args)-1 > 1 {
-			return fmt.Errorf(i18n.G("More than one file to download, but target is not a directory"))
+			return errors.New(i18n.G("More than one file to download, but target is not a directory"))
 		}
 	} else if strings.HasSuffix(args[len(args)-1], string(os.PathSeparator)) || len(args)-1 > 1 {
 		err := os.MkdirAll(target, DirMode)
@@ -527,7 +536,7 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse remote
-	resources, err := c.global.ParseServers(args[:len(args)-1]...)
+	resources, err := c.global.parseServers(args[:len(args)-1]...)
 	if err != nil {
 		return err
 	}
@@ -593,9 +602,9 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 				}
 
 				continue
-			} else {
-				return fmt.Errorf(i18n.G("Can't pull a directory without --recursive"))
 			}
+
+			return errors.New(i18n.G("Can't pull a directory without --recursive"))
 		}
 
 		var targetPath string
@@ -621,7 +630,7 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			defer func() { _ = f.Close() }()
+			defer func() { _ = f.Close() }() // nolint:revive
 
 			err = os.Chmod(targetPath, os.FileMode(srcInfo.Mode()))
 			if err != nil {
@@ -645,7 +654,8 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 					progress.UpdateProgress(ioprogress.ProgressData{
 						Text: fmt.Sprintf("%s (%s/s)",
 							units.GetByteSizeString(bytesReceived, 2),
-							units.GetByteSizeString(speed, 2))})
+							units.GetByteSizeString(speed, 2)),
+					})
 				},
 			},
 		}
@@ -686,6 +696,7 @@ type cmdFilePush struct {
 	noModeChange bool
 }
 
+// Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdFilePush) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("push", i18n.G("<source path>... [<remote>:]<instance>/<path>"))
@@ -704,7 +715,7 @@ func (c *cmdFilePush) Command() *cobra.Command {
 
 	cmd.RunE = c.Run
 
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return nil, cobra.ShellCompDirectiveDefault
 		}
@@ -715,9 +726,10 @@ func (c *cmdFilePush) Command() *cobra.Command {
 	return cmd
 }
 
+// Run runs the actual command logic.
 func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 	// Quick checks.
-	exit, err := c.global.CheckArgs(cmd, args, 2, -1)
+	exit, err := c.global.checkArgs(cmd, args, 2, -1)
 	if exit {
 		return err
 	}
@@ -742,7 +754,7 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse remote
-	resources, err := c.global.ParseServers(pathSpec[0])
+	resources, err := c.global.parseServers(pathSpec[0])
 	if err != nil {
 		return err
 	}
@@ -782,7 +794,7 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 	if c.file.flagRecursive {
 		// Quick checks.
 		if c.file.flagUID != -1 || c.file.flagGID != -1 || c.file.flagMode != "" {
-			return fmt.Errorf(i18n.G("Can't supply uid/gid/mode in recursive mode"))
+			return errors.New(i18n.G("Can't supply uid/gid/mode in recursive mode"))
 		}
 
 		// Create needed paths if requested
@@ -830,7 +842,7 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	if (len(sourcefilenames) > 1) && !targetIsDir {
-		return fmt.Errorf(i18n.G("Missing target directory"))
+		return errors.New(i18n.G("Missing target directory"))
 	}
 
 	// Make sure all of the files are accessible by us before trying to push any of them
@@ -846,7 +858,7 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		defer func() { _ = file.Close() }()
+		defer func() { _ = file.Close() }() // nolint:revive
 		files = append(files, file)
 	}
 
@@ -1006,9 +1018,16 @@ func (c *cmdFile) sftpCreateFile(sftpConn *sftp.Client, targetPath string, args 
 		defer func() { _ = file.Close() }()
 
 		if push {
-			_, err = io.Copy(file, args.Content)
-			if err != nil {
-				return err
+			for {
+				// Read 1MB at a time.
+				_, err = io.CopyN(file, args.Content, 1024*1024)
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+
+					return err
+				}
 			}
 		}
 
@@ -1121,15 +1140,23 @@ func (c *cmdFile) recursivePullFile(sftpConn *sftp.Client, p string, targetDir s
 					progress.UpdateProgress(ioprogress.ProgressData{
 						Text: fmt.Sprintf("%s (%s/s)",
 							units.GetByteSizeString(bytesReceived, 2),
-							units.GetByteSizeString(speed, 2))})
+							units.GetByteSizeString(speed, 2)),
+					})
 				},
 			},
 		}
 
-		_, err = io.Copy(writer, src)
-		if err != nil {
-			progress.Done("")
-			return err
+		for {
+			// Read 1MB at a time.
+			_, err = io.CopyN(writer, src, 1024*1024)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+
+				progress.Done("")
+				return err
+			}
 		}
 
 		err = src.Close()
@@ -1164,8 +1191,14 @@ func (c *cmdFile) recursivePullFile(sftpConn *sftp.Client, p string, targetDir s
 
 func (c *cmdFile) recursivePushFile(sftpConn *sftp.Client, source string, target string) error {
 	source = filepath.Clean(source)
+
 	sourceDir, _ := filepath.Split(source)
 	sourceLen := len(sourceDir)
+
+	// Special handling for relative paths.
+	if source == ".." {
+		sourceLen = 1
+	}
 
 	sendFile := func(p string, fInfo os.FileInfo, err error) error {
 		if err != nil {
@@ -1238,7 +1271,8 @@ func (c *cmdFile) recursivePushFile(sftpConn *sftp.Client, source string, target
 					Handler: func(percent int64, speed int64) {
 						progress.UpdateProgress(ioprogress.ProgressData{
 							Text: fmt.Sprintf("%d%% (%s/s)", percent,
-								units.GetByteSizeString(speed, 2))})
+								units.GetByteSizeString(speed, 2)),
+						})
 					},
 				},
 			}, args.Content)
@@ -1331,6 +1365,7 @@ type cmdFileMount struct {
 	flagAuthUser string
 }
 
+// Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdFileMount) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("mount", i18n.G("[<remote>:]<instance>[/<path>] [<target path>]"))
@@ -1347,7 +1382,7 @@ func (c *cmdFileMount) Command() *cobra.Command {
 
 	cmd.RunE = c.Run
 
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return c.global.cmpFiles(toComplete, false)
 		}
@@ -1362,15 +1397,16 @@ func (c *cmdFileMount) Command() *cobra.Command {
 	return cmd
 }
 
+// Run runs the actual command logic.
 func (c *cmdFileMount) Run(cmd *cobra.Command, args []string) error {
 	// Quick checks.
-	exit, err := c.global.CheckArgs(cmd, args, 1, 2)
+	exit, err := c.global.checkArgs(cmd, args, 1, 2)
 	if exit {
 		return err
 	}
 
 	// Parse remote.
-	resources, err := c.global.ParseServers(args[0])
+	resources, err := c.global.parseServers(args[0])
 	if err != nil {
 		return err
 	}
@@ -1388,13 +1424,13 @@ func (c *cmdFileMount) Run(cmd *cobra.Command, args []string) error {
 		}
 
 		if !sb.IsDir() {
-			return fmt.Errorf(i18n.G("Target path must be a directory"))
+			return errors.New(i18n.G("Target path must be a directory"))
 		}
 	}
 
 	// Check which mode we should operate in. If target path is provided we use sshfs mode.
 	if targetPath != "" && c.flagListen != "" {
-		return fmt.Errorf(i18n.G("Target path and --listen flag cannot be used together"))
+		return errors.New(i18n.G("Target path and --listen flag cannot be used together"))
 	}
 
 	instSpec := strings.SplitN(resource.name, "/", 2)
@@ -1406,7 +1442,7 @@ func (c *cmdFileMount) Run(cmd *cobra.Command, args []string) error {
 
 	// Check instance path isn't provided in listener mode.
 	if len(instSpec) > 1 && targetPath == "" {
-		return fmt.Errorf(i18n.G("Instance path cannot be used in SSH SFTP listener mode"))
+		return errors.New(i18n.G("Instance path cannot be used in SSH SFTP listener mode"))
 	}
 
 	instName := instSpec[0]
@@ -1416,7 +1452,7 @@ func (c *cmdFileMount) Run(cmd *cobra.Command, args []string) error {
 		sshfsPath, err := exec.LookPath("sshfs")
 		if err != nil {
 			// If sshfs command not found, then advise user of the --listen flag.
-			return fmt.Errorf(i18n.G("sshfs not found. Try SSH SFTP mode using the --listen flag"))
+			return errors.New(i18n.G("sshfs not found. Try SSH SFTP mode using the --listen flag"))
 		}
 
 		// Setup sourcePath with leading / to ensure we reference the instance path from / location.
@@ -1519,7 +1555,7 @@ func (c *cmdFileMount) sshSFTPServer(ctx context.Context, instName string, resou
 	}
 
 	randString := func(length int) string {
-		var chars = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0987654321")
+		chars := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0987654321")
 		randStr := make([]rune, length)
 		for i := range randStr {
 			randStr[i] = chars[rand.Intn(len(chars))]

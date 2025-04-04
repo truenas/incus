@@ -1,9 +1,7 @@
 package acme
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -11,15 +9,11 @@ import (
 	"slices"
 	"time"
 
-	"github.com/go-acme/lego/v4/acme"
-	"github.com/go-acme/lego/v4/certcrypto"
-	"github.com/go-acme/lego/v4/certificate"
-	"github.com/go-acme/lego/v4/lego"
-	"github.com/go-acme/lego/v4/registration"
-
 	"github.com/lxc/incus/v6/internal/server/state"
 	internalUtil "github.com/lxc/incus/v6/internal/util"
 	"github.com/lxc/incus/v6/shared/logger"
+	"github.com/lxc/incus/v6/shared/subprocess"
+	localtls "github.com/lxc/incus/v6/shared/tls"
 	"github.com/lxc/incus/v6/shared/util"
 )
 
@@ -33,6 +27,12 @@ const retries = 5
 // certificate at a later stage.
 const ClusterCertFilename = "cluster.crt.new"
 
+// CertKeyPair describes a certificate and its private key.
+type CertKeyPair struct {
+	Certificate []byte `json:"-"`
+	PrivateKey  []byte `json:"-"`
+}
+
 // certificateNeedsUpdate returns true if the domain doesn't match the certificate's DNS names
 // or it's valid for less than 30 days.
 func certificateNeedsUpdate(domain string, cert *x509.Certificate) bool {
@@ -40,10 +40,10 @@ func certificateNeedsUpdate(domain string, cert *x509.Certificate) bool {
 }
 
 // UpdateCertificate updates the certificate.
-func UpdateCertificate(s *state.State, provider ChallengeProvider, clustered bool, domain string, email string, caURL string, force bool) (*certificate.Resource, error) {
+func UpdateCertificate(s *state.State, challengeType string, clustered bool, domain string, email string, caURL string, force bool) (*CertKeyPair, error) {
 	clusterCertFilename := internalUtil.VarPath(ClusterCertFilename)
 
-	l := logger.AddContext(logger.Ctx{"domain": domain, "caURL": caURL})
+	l := logger.AddContext(logger.Ctx{"domain": domain, "caURL": caURL, "challenge": challengeType})
 
 	// If clusterCertFilename exists, it means that a previously issued certificate couldn't be
 	// distributed to all cluster members and was therefore kept back. In this case, don't issue
@@ -72,7 +72,7 @@ func UpdateCertificate(s *state.State, provider ChallengeProvider, clustered boo
 		}
 
 		if !certificateNeedsUpdate(domain, cert) {
-			return &certificate.Resource{
+			return &CertKeyPair{
 				Certificate: clusterCert,
 				PrivateKey:  key,
 			}, nil
@@ -99,96 +99,66 @@ func UpdateCertificate(s *state.State, provider ChallengeProvider, clustered boo
 		return nil, nil
 	}
 
-	// Generate new private key for user. This key needs to be different from the server's private key.
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpDir, err := os.MkdirTemp("", "lego")
 	if err != nil {
-		return nil, fmt.Errorf("Failed generating private key for user account: %w", err)
+		return nil, fmt.Errorf("Failed to create temporary directory: %w", err)
 	}
 
-	user := user{
-		Email: email,
-		Key:   privateKey,
+	defer func() {
+		err := os.RemoveAll(tmpDir)
+		if err != nil {
+			logger.Warn("Failed to remove temporary directory", logger.Ctx{"err": err})
+		}
+	}()
+
+	env := os.Environ()
+
+	args := []string{
+		"--accept-tos",
+		"--domains", domain,
+		"--email", email,
+		"--path", tmpDir,
+		"--server", caURL,
 	}
 
-	config := lego.NewConfig(&user)
+	if challengeType == "DNS-01" {
+		provider, environment, resolvers := s.GlobalConfig.ACMEDNS()
 
-	if caURL != "" {
-		config.CADirURL = caURL
-	} else {
-		// Default URL for Let's Encrypt
-		config.CADirURL = "https://acme-v02.api.letsencrypt.org/directory"
-	}
+		env = append(env, environment...)
 
-	config.Certificate.KeyType = certcrypto.RSA2048
-
-	client, err := lego.NewClient(config)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create new client: %w", err)
-	}
-
-	err = provider.RegisterWithSolver(client.Challenge)
-	if err != nil {
-		return nil, fmt.Errorf("Failed setting challenge provider: %w", err)
-	}
-
-	var reg *registration.Resource
-
-	// Registration might fail randomly (as seen in manual tests), so retry in that case.
-	for i := 0; i < retries; i++ {
-		reg, err = client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
-		if err == nil {
-			break
+		if provider == "" {
+			return nil, fmt.Errorf("DNS-01 challenge type requires acme.dns.provider configuration key to be set")
 		}
 
-		// In case we were rate limited, don't try again.
-		details, ok := err.(*acme.ProblemDetails)
-		if ok && details.Type == "urn:ietf:params:acme:error:rateLimited" {
-			break
+		args = append(args, "--dns", provider)
+		if len(resolvers) > 0 {
+			for _, resolver := range resolvers {
+				args = append(args, "--dns.resolvers", resolver)
+			}
 		}
+	} else if challengeType == "HTTP-01" {
+		args = append(args, "--http")
 
-		l.Warn("Failed to register user, retrying in 10 seconds", logger.Ctx{"err": err})
-		time.Sleep(10 * time.Second)
+		port := s.GlobalConfig.ACMEHTTP()
+		if port != "" {
+			args = append(args, "--http.port", port)
+		}
 	}
 
+	args = append(args, "run")
+
+	_, _, err = subprocess.RunCommandSplit(context.TODO(), env, nil, "lego", args...)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to register user: %w", err)
+		return nil, fmt.Errorf("Failed to run lego command: %w", err)
 	}
 
-	user.Registration = reg
-
-	request := certificate.ObtainRequest{
-		Domains:    []string{domain},
-		Bundle:     true,
-		PrivateKey: certInfo.KeyPair().PrivateKey,
-	}
-
-	var certificates *certificate.Resource
-
-	l.Info("Issuing certificate")
-
-	// Get new certificate.
-	// This might fail randomly (as seen in manual tests), so retry in that case.
-	for i := 0; i < retries; i++ {
-		certificates, err = client.Certificate.Obtain(request)
-		if err == nil {
-			break
-		}
-
-		// In case we were rate limited, don't try again.
-		details, ok := err.(*acme.ProblemDetails)
-		if ok && details.Type == "urn:ietf:params:acme:error:rateLimited" {
-			break
-		}
-
-		l.Warn("Failed to obtain certificate, retrying in 10 seconds", logger.Ctx{"err": err})
-		time.Sleep(10 * time.Second)
-	}
-
+	certInfo, err = localtls.KeyPairAndCA(tmpDir+"/certificates", domain, localtls.CertServer, true)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to obtain certificate: %w", err)
+		return nil, fmt.Errorf("Failed to load certificate and key file: %w", err)
 	}
 
-	l.Info("Finished issuing certificate")
-
-	return certificates, nil
+	return &CertKeyPair{
+		Certificate: certInfo.PublicKey(),
+		PrivateKey:  certInfo.PrivateKey(),
+	}, nil
 }

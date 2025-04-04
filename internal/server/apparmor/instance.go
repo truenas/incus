@@ -44,7 +44,7 @@ func InstanceProfileName(inst instance) string {
 // InstanceNamespaceName returns the instance's AppArmor namespace.
 func InstanceNamespaceName(inst instance) string {
 	// Unlike in profile names, / isn't an allowed character so replace with a -.
-	path := strings.Replace(strings.Trim(internalUtil.VarPath(""), "/"), "/", "-", -1)
+	path := strings.ReplaceAll(strings.Trim(internalUtil.VarPath(""), "/"), "/", "-")
 	name := fmt.Sprintf("%s_<%s>", project.Instance(inst.Project().Name, inst.Name()), path)
 	return profileName("", name)
 }
@@ -135,7 +135,7 @@ func instanceProfileGenerate(sysOS *sys.OS, inst instance, extraBinaries []strin
 	}
 
 	if string(content) != string(updated) {
-		err = os.WriteFile(profile, []byte(updated), 0600)
+		err = os.WriteFile(profile, []byte(updated), 0o600)
 		if err != nil {
 			return err
 		}

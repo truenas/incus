@@ -42,7 +42,7 @@ import (
 	"github.com/lxc/incus/v6/shared/util"
 )
 
-// Lock to prevent concurent networks creation.
+// Lock to prevent concurrent networks creation.
 var networkCreateLock sync.Mutex
 
 var networksCmd = APIEndpoint{
@@ -797,16 +797,25 @@ func doNetworksCreate(ctx context.Context, s *state.State, n network.Network, cl
 	revert := revert.New()
 	defer revert.Fail()
 
-	// Don't validate network config during pre-cluster-join phase, as if network has ACLs they won't exist
-	// in the local database yet. Once cluster join is completed, network will be restarted to give chance for
-	// ACL firewall config to be applied.
-	if clientType != clusterRequest.ClientTypeJoiner {
-		// Validate so that when run on a cluster node the full config (including node specific config)
-		// is checked.
-		err := n.Validate(n.Config())
-		if err != nil {
-			return err
+	validateConfig := n.Config()
+
+	// Skip the ACLs during validation on cluster join as those aren't yet available in the database.
+	if clientType == clusterRequest.ClientTypeJoiner {
+		validateConfig = map[string]string{}
+
+		for k, v := range n.Config() {
+			if k == "security.acls" || strings.HasPrefix(k, "security.acls.") {
+				continue
+			}
+
+			validateConfig[k] = v
 		}
+	}
+
+	// Validate so that when run on a cluster node the full config (including node specific config) is checked.
+	err := n.Validate(validateConfig)
+	if err != nil {
+		return err
 	}
 
 	if n.LocalStatus() == api.NetworkStatusCreated {
@@ -815,7 +824,7 @@ func doNetworksCreate(ctx context.Context, s *state.State, n network.Network, cl
 	}
 
 	// Run initial creation setup for the network driver.
-	err := n.Create(clientType)
+	err = n.Create(clientType)
 	if err != nil {
 		return err
 	}
@@ -1187,7 +1196,7 @@ func networkPost(d *Daemon, r *http.Request) response.Response {
 	//        network having already been renamed in the database, which is
 	//        a chicken-and-egg problem for cluster notifications (the
 	//        serving node should typically do the database job, so the
-	//        network is not yet renamed inthe db when the notified node
+	//        network is not yet renamed in the db when the notified node
 	//        runs network.Start).
 	if s.ServerClustered {
 		return response.BadRequest(fmt.Errorf("Renaming clustered network not supported"))

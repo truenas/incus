@@ -675,7 +675,6 @@ func doApi10Update(d *Daemon, r *http.Request, req api.ServerPut, patch bool) re
 
 			return nil
 		})
-
 		if err != nil {
 			logger.Warn("Failed reverting node config", logger.Ctx{"err": err})
 		}
@@ -736,7 +735,6 @@ func doApi10Update(d *Daemon, r *http.Request, req api.ServerPut, patch bool) re
 
 			return nil
 		})
-
 		if err != nil {
 			logger.Warn("Failed reverting cluster config", logger.Ctx{"err": err})
 		}
@@ -794,12 +792,13 @@ func doApi10UpdateTriggers(d *Daemon, nodeChanged, clusterChanged map[string]str
 	oidcChanged := false
 	openFGAChanged := false
 	ovnChanged := false
+	linstorChanged := false
 	ovsChanged := false
 	syslogChanged := false
 
 	for key := range clusterChanged {
 		switch key {
-		case "acme.ca_url", "acme.domain":
+		case "acme.agree_tos", "acme.ca_url", "acme.challenge", "acme.domain", "acme.email", "acme.provider", "acme.provider.environment", "acme.provider.resolvers":
 			acmeChanged = true
 
 		case "cluster.images_minimal_replica":
@@ -837,6 +836,9 @@ func doApi10UpdateTriggers(d *Daemon, nodeChanged, clusterChanged map[string]str
 
 		case "openfga.api.url", "openfga.api.token", "openfga.store.id":
 			openFGAChanged = true
+
+		case "storage.linstor.controller_connection", "storage.linstor.ca_cert", "storage.linstor.client_cert", "storage.linstor.client_key":
+			linstorChanged = true
 		}
 	}
 
@@ -933,7 +935,7 @@ func doApi10UpdateTriggers(d *Daemon, nodeChanged, clusterChanged map[string]str
 		asn := clusterConfig.BGPASN()
 		routerid := nodeConfig.BGPRouterID()
 
-		err := s.BGP.Reconfigure(address, uint32(asn), net.ParseIP(routerid))
+		err := s.BGP.Configure(address, uint32(asn), net.ParseIP(routerid))
 		if err != nil {
 			return fmt.Errorf("Failed reconfiguring BGP: %w", err)
 		}
@@ -999,6 +1001,13 @@ func doApi10UpdateTriggers(d *Daemon, nodeChanged, clusterChanged map[string]str
 
 	if syslogChanged {
 		err := d.setupSyslogSocket(nodeConfig.SyslogSocket())
+		if err != nil {
+			return err
+		}
+	}
+
+	if linstorChanged {
+		err := d.setupLinstor()
 		if err != nil {
 			return err
 		}

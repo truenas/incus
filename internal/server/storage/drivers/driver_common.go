@@ -67,7 +67,7 @@ func (d *common) validatePool(config map[string]string, driverRules map[string]f
 
 	// Run the validator against each field.
 	for k, validator := range rules {
-		checkedFields[k] = struct{}{} //Mark field as checked.
+		checkedFields[k] = struct{}{} // Mark field as checked.
 		err := validator(config[k])
 		if err != nil {
 			return fmt.Errorf("Invalid value for option %q: %w", k, err)
@@ -94,7 +94,7 @@ func (d *common) validatePool(config map[string]string, driverRules map[string]f
 
 // fillVolumeConfig populates volume config with defaults from pool.
 // excludeKeys allow exclude some keys from copying to volume config.
-// Sometimes that can be useful when copying is dependant from specific conditions
+// Sometimes that can be useful when copying is dependent from specific conditions
 // and shouldn't be done in generic way.
 func (d *common) fillVolumeConfig(vol *Volume, excludedKeys ...string) error {
 	for k := range d.config {
@@ -161,7 +161,7 @@ func (d *common) validateVolume(vol Volume, driverRules map[string]func(value st
 
 	// Run the validator against each field.
 	for k, validator := range rules {
-		checkedFields[k] = struct{}{} //Mark field as checked.
+		checkedFields[k] = struct{}{} // Mark field as checked.
 		err := validator(vol.config[k])
 		if err != nil {
 			return fmt.Errorf("Invalid value for volume %q option %q: %w", vol.name, k, err)
@@ -202,7 +202,7 @@ func (d *common) validateVolume(vol Volume, driverRules map[string]func(value st
 
 // MigrationType returns the type of transfer methods to be used when doing migrations between pools
 // in preference order.
-func (d *common) MigrationTypes(contentType ContentType, refresh bool, copySnapshots bool) []localMigration.Type {
+func (d *common) MigrationTypes(contentType ContentType, refresh bool, copySnapshots bool, clusterMove bool, storageMove bool) []localMigration.Type {
 	var transportType migration.MigrationFSType
 	var rsyncFeatures []string
 

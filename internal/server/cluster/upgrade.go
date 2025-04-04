@@ -87,7 +87,6 @@ func MaybeUpdate(state *state.State) error {
 		shouldUpdate = outdated
 		return nil
 	})
-
 	if err != nil {
 		// Just log the error and return.
 		return fmt.Errorf("Failed to check if this node is out-of-date: %w", err)
@@ -110,7 +109,7 @@ func triggerUpdate() error {
 		return nil
 	}
 
-	// Wait a random amout of seconds (up to 30) in order to avoid
+	// Wait a random amount of seconds (up to 30) in order to avoid
 	// restarting all cluster members at the same time, and make the
 	// upgrade more graceful.
 	wait := time.Duration(rand.Intn(30)) * time.Second

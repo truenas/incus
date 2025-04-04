@@ -161,6 +161,16 @@ func (c *Config) NetworkOVNSSL() (string, string, string) {
 	return c.m.GetString("network.ovn.ca_cert"), c.m.GetString("network.ovn.client_cert"), c.m.GetString("network.ovn.client_key")
 }
 
+// LinstorControllerConnection returns the Linstor controller connection string.
+func (c *Config) LinstorControllerConnection() string {
+	return c.m.GetString("storage.linstor.controller_connection")
+}
+
+// LinstorSSL returns all three SSL configuration keys needed for a Linstor controller connection.
+func (c *Config) LinstorSSL() (string, string, string) {
+	return c.m.GetString("storage.linstor.ca_cert"), c.m.GetString("storage.linstor.client_cert"), c.m.GetString("storage.linstor.client_key")
+}
+
 // ShutdownTimeout returns the number of minutes to wait for running operation to complete
 // before the server shuts down.
 func (c *Config) ShutdownTimeout() time.Duration {
@@ -235,10 +245,9 @@ func (c *Config) ACME() (string, string, string, bool, string) {
 }
 
 // ACMEDNS returns all ACME DNS settings needed for DNS-01 challenge.
-func (c *Config) ACMEDNS() (string, map[string]string, []string) {
+func (c *Config) ACMEDNS() (string, []string, []string) {
+	var environment []string
 	var resolvers []string
-
-	env := make(map[string]string)
 
 	if c.m.GetString("acme.provider.environment") != "" {
 		lines := strings.Split(strings.TrimSpace(c.m.GetString("acme.provider.environment")), "\n")
@@ -257,7 +266,7 @@ func (c *Config) ACMEDNS() (string, map[string]string, []string) {
 			key := strings.TrimSpace(parts[0])
 			value := strings.TrimSpace(parts[1])
 
-			env[key] = value
+			environment = append(environment, strings.Join([]string{key, value}, "="))
 		}
 	}
 
@@ -265,7 +274,12 @@ func (c *Config) ACMEDNS() (string, map[string]string, []string) {
 		resolvers = strings.Split(c.m.GetString("acme.provider.resolvers"), ",")
 	}
 
-	return c.m.GetString("acme.provider"), env, resolvers
+	return c.m.GetString("acme.provider"), environment, resolvers
+}
+
+// ACMEHTTP returns all ACME HTTP settings needed for HTTP-01 challenge.
+func (c *Config) ACMEHTTP() string {
+	return c.m.GetString("acme.http.port")
 }
 
 // ClusterJoinTokenExpiry returns the cluster join token expiry.
@@ -356,7 +370,7 @@ var ConfigSchema = config.Schema{
 	//  scope: global
 	//  defaultdesc: `https://acme-v02.api.letsencrypt.org/directory`
 	//  shortdesc: URL to the directory resource of the ACME service
-	"acme.ca_url": {},
+	"acme.ca_url": {Default: "https://acme-v02.api.letsencrypt.org/directory"},
 
 	// gendoc:generate(entity=server, group=acme, key=acme.domain)
 	//
@@ -418,6 +432,15 @@ var ConfigSchema = config.Schema{
 	//  defaultdesc: ``
 	//  shortdesc: Comma-separated list of DNS resolvers (used by DNS-01)
 	"acme.provider.resolvers": {Type: config.String, Default: ""},
+
+	// gendoc:generate(entity=server, group=acme, key=acme.http.port)
+	// Set the port and interface to use for HTTP-01 based challenges to listen on
+	// ---
+	//  type: string
+	//  scope: global
+	//  defaultdesc: `:80`
+	//  shortdesc: Port and interface for HTTP server (used by HTTP-01)
+	"acme.http.port": {Default: ":80", Validator: validate.Optional(validate.IsListenAddress(true, true, false))},
 
 	// gendoc:generate(entity=server, group=miscellaneous, key=authorization.scriptlet)
 	// When using scriptlet-based authorization, this option stores the scriptlet.
@@ -901,6 +924,38 @@ var ConfigSchema = config.Schema{
 	//  defaultdesc: Content of `/etc/ovn/key_host` if present
 	//  shortdesc: OVN SSL client key
 	"network.ovn.client_key": {Default: ""},
+
+	// gendoc:generate(entity=server, group=miscellaneous, key=storage.linstor.controller_connection)
+	//
+	// ---
+	//  type: string
+	//  scope: global
+	//  shortdesc: LINSTOR controller connection string
+	"storage.linstor.controller_connection": {Default: ""},
+
+	// gendoc:generate(entity=server, group=miscellaneous, key=storage.linstor.ca_cert)
+	//
+	// ---
+	//  type: string
+	//  scope: global
+	//  shortdesc: LINSTOR SSL certificate authority
+	"storage.linstor.ca_cert": {Default: ""},
+
+	// gendoc:generate(entity=server, group=miscellaneous, key=storage.linstor.client_cert)
+	//
+	// ---
+	//  type: string
+	//  scope: global
+	//  shortdesc: LINSTOR SSL client certificate
+	"storage.linstor.client_cert": {Default: ""},
+
+	// gendoc:generate(entity=server, group=miscellaneous, key=storage.linstor.client_key)
+	//
+	// ---
+	//  type: string
+	//  scope: global
+	//  shortdesc: LINSTOR SSL client key
+	"storage.linstor.client_key": {Default: ""},
 }
 
 func expiryValidator(value string) error {

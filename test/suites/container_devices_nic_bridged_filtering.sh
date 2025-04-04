@@ -274,7 +274,7 @@ test_container_devices_nic_bridged_filtering() {
   incus config device unset "${ctPrefix}A" eth0 ipv4.address
   incus start "${ctPrefix}A"
   if ! grep "192.0.2.2" "${INCUS_DIR}/networks/${brName}/dnsmasq.hosts/${ctPrefix}A.eth0" ; then
-    echo "dnsmasq host config doesnt contain previous lease as static IPv4 config"
+    echo "dnsmasq host config doesn't contain previous lease as static IPv4 config"
     false
   fi
 
@@ -284,14 +284,14 @@ test_container_devices_nic_bridged_filtering() {
 
   # Simulate 192.0.2.2 being used by another container, next free IP is 192.0.2.3
   kill "$(awk '/^pid/ {print $2}' "${INCUS_DIR}"/networks/"${brName}"/dnsmasq.pid)"
-  echo "$(date --date="1hour" +%s) 00:16:3e:55:4c:fd 192.0.2.2 c1 ff:6f:c3:ab:c5:00:02:00:00:ab:11:f8:5c:3d:73:db:b2:6a:06" > "${INCUS_DIR}/networks/${brName}/dnsmasq.leases"
+  echo "$(date --date="1hour" +%s) 10:66:6a:55:4c:fd 192.0.2.2 c1 ff:6f:c3:ab:c5:00:02:00:00:ab:11:f8:5c:3d:73:db:b2:6a:06" > "${INCUS_DIR}/networks/${brName}/dnsmasq.leases"
   shutdown_incus "${INCUS_DIR}"
   respawn_incus "${INCUS_DIR}" true
   incus config device set "${ctPrefix}A" eth0 security.ipv4_filtering true
   incus start "${ctPrefix}A"
 
   if ! grep "192.0.2.3" "${INCUS_DIR}/networks/${brName}/dnsmasq.hosts/${ctPrefix}A.eth0" ; then
-    echo "dnsmasq host config doesnt contain sequentially allocated static IPv4 config"
+    echo "dnsmasq host config doesn't contain sequentially allocated static IPv4 config"
     false
   fi
 
@@ -301,7 +301,7 @@ test_container_devices_nic_bridged_filtering() {
   incus start "${ctPrefix}A"
 
   if ! grep "192.0.2.100" "${INCUS_DIR}/networks/${brName}/dnsmasq.hosts/${ctPrefix}A.eth0" ; then
-    echo "dnsmasq host config doesnt contain sequentially range allocated static IPv4 config"
+    echo "dnsmasq host config doesn't contain sequentially range allocated static IPv4 config"
     false
   fi
 
@@ -520,13 +520,13 @@ test_container_devices_nic_bridged_filtering() {
 
   # Set static MAC so that SLAAC address is derived predictably and check it is applied to static config.
   incus config device unset "${ctPrefix}A" eth0 ipv6.address
-  incus config device set "${ctPrefix}A" eth0 hwaddr 00:16:3e:92:f3:c1
+  incus config device set "${ctPrefix}A" eth0 hwaddr 10:66:6a:92:f3:c1
   incus config device set "${ctPrefix}A" eth0 security.ipv6_filtering false
   rm "${INCUS_DIR}/networks/${brName}/dnsmasq.hosts/${ctPrefix}A.eth0"
   incus config device set "${ctPrefix}A" eth0 security.ipv6_filtering true
   incus start "${ctPrefix}A"
-  if ! grep "\\[2001:db8:1:0:216:3eff:fe92:f3c1\\]" "${INCUS_DIR}/networks/${brName}/dnsmasq.hosts/${ctPrefix}A.eth0" ; then
-    echo "dnsmasq host config doesnt contain dynamically allocated static IPv6 config"
+  if ! grep "\\[2001:db8:1:0:1266:6aff:fe92:f3c1\\]" "${INCUS_DIR}/networks/${brName}/dnsmasq.hosts/${ctPrefix}A.eth0" ; then
+    echo "dnsmasq host config doesn't contain dynamically allocated static IPv6 config"
     false
   fi
 
@@ -534,15 +534,15 @@ test_container_devices_nic_bridged_filtering() {
   incus config device set "${ctPrefix}A" eth0 security.ipv6_filtering false
   rm "${INCUS_DIR}/networks/${brName}/dnsmasq.hosts/${ctPrefix}A.eth0"
 
-  # Simulate SLAAC 2001:db8:1::216:3eff:fe92:f3c1 being used by another container, next free IP is 2001:db8:1::2
+  # Simulate SLAAC 2001:db8:1::1266:6aff:fe92:f3c1 being used by another container, next free IP is 2001:db8:1::2
   kill "$(awk '/^pid/ {print $2}' "${INCUS_DIR}"/networks/"${brName}"/dnsmasq.pid)"
-  echo "$(date --date="1hour" +%s) 1875094469 2001:db8:1::216:3eff:fe92:f3c1 c1 00:02:00:00:ab:11:f8:5c:3d:73:db:b2:6a:06" > "${INCUS_DIR}/networks/${brName}/dnsmasq.leases"
+  echo "$(date --date="1hour" +%s) 1875094469 2001:db8:1::1266:6aff:fe92:f3c1 c1 00:02:00:00:ab:11:f8:5c:3d:73:db:b2:6a:06" > "${INCUS_DIR}/networks/${brName}/dnsmasq.leases"
   shutdown_incus "${INCUS_DIR}"
   respawn_incus "${INCUS_DIR}" true
   incus config device set "${ctPrefix}A" eth0 security.ipv6_filtering true
   incus start "${ctPrefix}A"
   if ! grep "\\[2001:db8:1::2\\]" "${INCUS_DIR}/networks/${brName}/dnsmasq.hosts/${ctPrefix}A.eth0" ; then
-    echo "dnsmasq host config doesnt contain sequentially allocated static IPv6 config"
+    echo "dnsmasq host config doesn't contain sequentially allocated static IPv6 config"
     false
   fi
 

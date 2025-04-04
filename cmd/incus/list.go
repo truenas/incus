@@ -1,10 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
-	"regexp"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -42,6 +43,7 @@ type cmdList struct {
 	shorthandFilters map[string]func(*api.Instance, *api.InstanceState, string) bool
 }
 
+// Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdList) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("list", i18n.G("[<remote>:] [<filter>...]"))
@@ -73,7 +75,7 @@ Examples:
   - "type=container" will list all container instances
   - "type=container status=running" will list all running container instances
 
-A regular expression matching a configuration item or its value. (e.g. volatile.eth0.hwaddr=00:16:3e:.*).
+A regular expression matching a configuration item or its value. (e.g. volatile.eth0.hwaddr=10:66:6a:.*).
 
 When multiple filters are passed, they are added one on top of the other,
 selecting instances which satisfy them all.
@@ -136,11 +138,11 @@ incus list -c ns,user.comment:comment
 	cmd.Flags().BoolVar(&c.flagFast, "fast", false, i18n.G("Fast mode (same as --columns=nsacPt)"))
 	cmd.Flags().BoolVar(&c.flagAllProjects, "all-projects", false, i18n.G("Display instances from all projects"))
 
-	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
 	}
 
-	cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return c.global.cmpRemotes(toComplete, false)
 		}
@@ -151,96 +153,32 @@ incus list -c ns,user.comment:comment
 	return cmd
 }
 
-const defaultColumns = "ns46tSL"
-const defaultColumnsAllProjects = "ens46tSL"
-const configColumnType = "config"
-const deviceColumnType = "devices"
+const (
+	defaultColumns            = "ns46tSL"
+	defaultColumnsAllProjects = "ens46tSL"
+	configColumnType          = "config"
+	deviceColumnType          = "devices"
+)
 
-// This seems a little excessive.
-func (c *cmdList) dotPrefixMatch(short string, full string) bool {
-	fullMembs := strings.Split(full, ".")
-	shortMembs := strings.Split(short, ".")
-
-	if len(fullMembs) != len(shortMembs) {
-		return false
-	}
-
-	for i := range fullMembs {
-		if !strings.HasPrefix(fullMembs[i], shortMembs[i]) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (c *cmdList) shouldShow(filters []string, inst *api.Instance, state *api.InstanceState, initial bool) bool {
+func (c *cmdList) shouldShow(filters []string, inst *api.Instance, state *api.InstanceState) bool {
 	c.mapShorthandFilters()
 
 	for _, filter := range filters {
-		if strings.Contains(filter, "=") {
-			membs := strings.SplitN(filter, "=", 2)
+		membs := strings.SplitN(filter, "=", 2)
 
-			key := membs[0]
-			var value string
-			if len(membs) < 2 {
-				value = ""
-			} else {
-				value = membs[1]
-			}
-
-			if initial || c.evaluateShorthandFilter(key, value, inst, state) {
-				continue
-			}
-
-			found := false
-			for configKey, configValue := range inst.ExpandedConfig {
-				if c.dotPrefixMatch(key, configKey) {
-					// Try to test filter value as a regexp.
-					regexpValue := value
-					if !(strings.Contains(value, "^") || strings.Contains(value, "$")) {
-						regexpValue = "^" + regexpValue + "$"
-					}
-
-					r, err := regexp.Compile(regexpValue)
-					// If not regexp compatible use original value.
-					if err != nil {
-						if value == configValue {
-							found = true
-							break
-						} else {
-							// The property was found but didn't match.
-							return false
-						}
-					} else if r.MatchString(configValue) {
-						found = true
-						break
-					}
-				}
-			}
-
-			if inst.ExpandedConfig[key] == value {
-				continue
-			}
-
-			if !found {
-				return false
-			}
+		key := membs[0]
+		var value string
+		if len(membs) < 2 {
+			value = ""
 		} else {
-			regexpValue := filter
-			if !(strings.Contains(filter, "^") || strings.Contains(filter, "$")) {
-				regexpValue = "^" + regexpValue + "$"
-			}
-
-			r, err := regexp.Compile(regexpValue)
-			if err == nil && r.MatchString(inst.Name) {
-				continue
-			}
-
-			if !strings.HasPrefix(inst.Name, filter) {
-				return false
-			}
+			value = membs[1]
 		}
+
+		if c.evaluateShorthandFilter(key, value, inst, state) {
+			continue
+		}
+
+		return false
 	}
 
 	return true
@@ -266,7 +204,6 @@ func (c *cmdList) evaluateShorthandFilter(key string, value string, inst *api.In
 	}
 
 	return matched
-
 }
 
 func (c *cmdList) listInstances(d incus.InstanceServer, instances []api.Instance, filters []string, columns []column) error {
@@ -437,7 +374,7 @@ func (c *cmdList) showInstances(instances []api.InstanceFull, filters []string, 
 	instancesFiltered := []api.InstanceFull{}
 
 	for _, inst := range instances {
-		if !c.shouldShow(filters, &inst.Instance, inst.State, false) {
+		if !c.shouldShow(filters, &inst.Instance, inst.State) {
 			continue
 		}
 
@@ -461,17 +398,18 @@ func (c *cmdList) showInstances(instances []api.InstanceFull, filters []string, 
 	return cli.RenderTable(os.Stdout, c.flagFormat, headers, data, instancesFiltered)
 }
 
+// Run runs the actual command logic.
 func (c *cmdList) Run(cmd *cobra.Command, args []string) error {
 	conf := c.global.conf
 
 	// Quick checks.
-	exit, err := c.global.CheckArgs(cmd, args, 0, -1)
+	exit, err := c.global.checkArgs(cmd, args, 0, -1)
 	if exit {
 		return err
 	}
 
 	if c.global.flagProject != "" && c.flagAllProjects {
-		return fmt.Errorf(i18n.G("Can't specify --project with --all-projects"))
+		return errors.New(i18n.G("Can't specify --project with --all-projects"))
 	}
 
 	// Parse the remote
@@ -492,6 +430,7 @@ func (c *cmdList) Run(cmd *cobra.Command, args []string) error {
 		} else if !strings.Contains(args[0], "=") {
 			remote = conf.DefaultRemote
 			name = args[0]
+			filters = args[1:]
 		}
 	}
 
@@ -515,19 +454,12 @@ func (c *cmdList) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Support for alternative filter names.
-	for i, filter := range filters {
-		fields := strings.SplitN(filter, "=", 2)
-		if len(fields) == 2 && fields[0] == "state" {
-			filters[i] = fmt.Sprintf("status=%s", fields[1])
-		}
-	}
-
 	if needsData && d.HasExtension("container_full") {
 		// Using the GetInstancesFull shortcut
 		var instances []api.InstanceFull
 
-		serverFilters, clientFilters := getServerSupportedFilters(filters, api.InstanceFull{})
+		serverFilters, clientFilters := getServerSupportedFilters(filters, []string{"ipv4", "ipv6"}, true)
+		serverFilters = prepareInstanceServerFilters(serverFilters, api.InstanceFull{})
 
 		if c.flagAllProjects {
 			instances, err = d.GetInstancesFullAllProjectsWithFilter(api.InstanceTypeAny, serverFilters)
@@ -544,7 +476,8 @@ func (c *cmdList) Run(cmd *cobra.Command, args []string) error {
 
 	// Get the list of instances
 	var instances []api.Instance
-	serverFilters, clientFilters := getServerSupportedFilters(filters, api.Instance{})
+	serverFilters, clientFilters := getServerSupportedFilters(filters, []string{"ipv4", "ipv6"}, true)
+	serverFilters = prepareInstanceServerFilters(serverFilters, api.Instance{})
 
 	if c.flagAllProjects {
 		instances, err = d.GetInstancesAllProjectsWithFilter(api.InstanceTypeAny, serverFilters)
@@ -556,39 +489,29 @@ func (c *cmdList) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Apply filters
-	instancesFiltered := []api.Instance{}
-	for _, inst := range instances {
-		if !c.shouldShow(clientFilters, &inst, nil, true) {
-			continue
-		}
-
-		instancesFiltered = append(instancesFiltered, inst)
-	}
-
 	// Fetch any remaining data and render the table
-	return c.listInstances(d, instancesFiltered, clientFilters, columns)
+	return c.listInstances(d, instances, clientFilters, columns)
 }
 
 func (c *cmdList) parseColumns(clustered bool) ([]column, bool, error) {
 	columnsShorthandMap := map[rune]column{
-		'4': {i18n.G("IPV4"), c.IP4ColumnData, true, false},
-		'6': {i18n.G("IPV6"), c.IP6ColumnData, true, false},
-		'a': {i18n.G("ARCHITECTURE"), c.ArchitectureColumnData, false, false},
-		'b': {i18n.G("STORAGE POOL"), c.StoragePoolColumnData, false, false},
-		'c': {i18n.G("CREATED AT"), c.CreatedColumnData, false, false},
+		'4': {i18n.G("IPV4"), c.ip4ColumnData, true, false},
+		'6': {i18n.G("IPV6"), c.ip6ColumnData, true, false},
+		'a': {i18n.G("ARCHITECTURE"), c.architectureColumnData, false, false},
+		'b': {i18n.G("STORAGE POOL"), c.storagePoolColumnData, false, false},
+		'c': {i18n.G("CREATED AT"), c.createdColumnData, false, false},
 		'd': {i18n.G("DESCRIPTION"), c.descriptionColumnData, false, false},
 		'D': {i18n.G("DISK USAGE"), c.diskUsageColumnData, true, false},
 		'e': {i18n.G("PROJECT"), c.projectColumnData, false, false},
 		'f': {i18n.G("BASE IMAGE"), c.baseImageColumnData, false, false},
 		'F': {i18n.G("BASE IMAGE"), c.baseImageFullColumnData, false, false},
-		'l': {i18n.G("LAST USED AT"), c.LastUsedColumnData, false, false},
+		'l': {i18n.G("LAST USED AT"), c.lastUsedColumnData, false, false},
 		'm': {i18n.G("MEMORY USAGE"), c.memoryUsageColumnData, true, false},
 		'M': {i18n.G("MEMORY USAGE%"), c.memoryUsagePercentColumnData, true, false},
 		'n': {i18n.G("NAME"), c.nameColumnData, false, false},
-		'N': {i18n.G("PROCESSES"), c.NumberOfProcessesColumnData, true, false},
-		'p': {i18n.G("PID"), c.PIDColumnData, true, false},
-		'P': {i18n.G("PROFILES"), c.ProfilesColumnData, false, false},
+		'N': {i18n.G("PROCESSES"), c.numberOfProcessesColumnData, true, false},
+		'p': {i18n.G("PID"), c.pidColumnData, true, false},
+		'P': {i18n.G("PROFILES"), c.profilesColumnData, false, false},
 		'S': {i18n.G("SNAPSHOTS"), c.numberSnapshotsColumnData, false, true},
 		's': {i18n.G("STATE"), c.statusColumnData, false, false},
 		't': {i18n.G("TYPE"), c.typeColumnData, false, false},
@@ -607,7 +530,7 @@ func (c *cmdList) parseColumns(clustered bool) ([]column, bool, error) {
 	if c.flagFast {
 		if c.flagColumns != defaultColumns && c.flagColumns != defaultColumnsAllProjects {
 			// --columns was specified too
-			return nil, false, fmt.Errorf(i18n.G("Can't specify --fast with --columns"))
+			return nil, false, errors.New(i18n.G("Can't specify --fast with --columns"))
 		}
 
 		if c.flagColumns == defaultColumnsAllProjects {
@@ -619,14 +542,15 @@ func (c *cmdList) parseColumns(clustered bool) ([]column, bool, error) {
 
 	if clustered {
 		columnsShorthandMap['L'] = column{
-			i18n.G("LOCATION"), c.locationColumnData, false, false}
+			i18n.G("LOCATION"), c.locationColumnData, false, false,
+		}
 	} else {
 		if c.flagColumns != defaultColumns && c.flagColumns != defaultColumnsAllProjects {
 			if strings.ContainsAny(c.flagColumns, "L") {
-				return nil, false, fmt.Errorf(i18n.G("Can't specify column L when not clustered"))
+				return nil, false, errors.New(i18n.G("Can't specify column L when not clustered"))
 			}
 		}
-		c.flagColumns = strings.Replace(c.flagColumns, "L", "", -1)
+		c.flagColumns = strings.ReplaceAll(c.flagColumns, "L", "")
 	}
 
 	columnList := strings.Split(c.flagColumns, ",")
@@ -643,14 +567,14 @@ func (c *cmdList) parseColumns(clustered bool) ([]column, bool, error) {
 		if !strings.Contains(columnEntry, ".") {
 			for _, columnRune := range columnEntry {
 				column, ok := columnsShorthandMap[columnRune]
-				if ok {
-					columns = append(columns, column)
-
-					if column.NeedsState || column.NeedsSnapshots {
-						needsData = true
-					}
-				} else {
+				if !ok {
 					return nil, false, fmt.Errorf(i18n.G("Unknown column shorthand char '%c' in '%s'"), columnRune, columnEntry)
+				}
+
+				columns = append(columns, column)
+
+				if column.NeedsState || column.NeedsSnapshots {
+					needsData = true
 				}
 			}
 		} else {
@@ -727,8 +651,8 @@ func (c *cmdList) parseColumns(clustered bool) ([]column, bool, error) {
 						v = cInfo.ExpandedDevices[d[0]][d[1]]
 					}
 
-					//// Truncate the data according to the max width.  A negative max width
-					//// indicates there is no effective limit.
+					// Truncate the data according to the max width.  A negative max width
+					// indicates there is no effective limit.
 					if maxWidth > 0 && len(v) > maxWidth {
 						return v[:maxWidth]
 					}
@@ -780,15 +704,15 @@ func (c *cmdList) statusColumnData(cInfo api.InstanceFull) string {
 	return strings.ToUpper(cInfo.Status)
 }
 
-func (c *cmdList) IP4ColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) ip4ColumnData(cInfo api.InstanceFull) string {
 	if cInfo.IsActive() && cInfo.State != nil && cInfo.State.Network != nil {
 		ipv4s := []string{}
-		for netName, net := range cInfo.State.Network {
-			if net.Type == "loopback" {
+		for netName, network := range cInfo.State.Network {
+			if network.Type == "loopback" {
 				continue
 			}
 
-			for _, addr := range net.Addresses {
+			for _, addr := range network.Addresses {
 				if slices.Contains([]string{"link", "local"}, addr.Scope) {
 					continue
 				}
@@ -806,15 +730,15 @@ func (c *cmdList) IP4ColumnData(cInfo api.InstanceFull) string {
 	return ""
 }
 
-func (c *cmdList) IP6ColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) ip6ColumnData(cInfo api.InstanceFull) string {
 	if cInfo.IsActive() && cInfo.State != nil && cInfo.State.Network != nil {
 		ipv6s := []string{}
-		for netName, net := range cInfo.State.Network {
-			if net.Type == "loopback" {
+		for netName, network := range cInfo.State.Network {
+			if network.Type == "loopback" {
 				continue
 			}
 
-			for _, addr := range net.Addresses {
+			for _, addr := range network.Addresses {
 				if slices.Contains([]string{"link", "local"}, addr.Scope) {
 					continue
 				}
@@ -907,7 +831,7 @@ func (c *cmdList) numberSnapshotsColumnData(cInfo api.InstanceFull) string {
 	return "0"
 }
 
-func (c *cmdList) PIDColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) pidColumnData(cInfo api.InstanceFull) string {
 	if cInfo.IsActive() && cInfo.State != nil {
 		return fmt.Sprintf("%d", cInfo.State.Pid)
 	}
@@ -915,11 +839,11 @@ func (c *cmdList) PIDColumnData(cInfo api.InstanceFull) string {
 	return ""
 }
 
-func (c *cmdList) ArchitectureColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) architectureColumnData(cInfo api.InstanceFull) string {
 	return cInfo.Architecture
 }
 
-func (c *cmdList) StoragePoolColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) storagePoolColumnData(cInfo api.InstanceFull) string {
 	for _, v := range cInfo.ExpandedDevices {
 		if v["type"] == "disk" && v["path"] == "/" {
 			return v["pool"]
@@ -929,11 +853,11 @@ func (c *cmdList) StoragePoolColumnData(cInfo api.InstanceFull) string {
 	return ""
 }
 
-func (c *cmdList) ProfilesColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) profilesColumnData(cInfo api.InstanceFull) string {
 	return strings.Join(cInfo.Profiles, "\n")
 }
 
-func (c *cmdList) CreatedColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) createdColumnData(cInfo api.InstanceFull) string {
 	if !cInfo.CreatedAt.IsZero() {
 		return cInfo.CreatedAt.Local().Format(dateLayout)
 	}
@@ -949,7 +873,7 @@ func (c *cmdList) startedColumnData(cInfo api.InstanceFull) string {
 	return ""
 }
 
-func (c *cmdList) LastUsedColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) lastUsedColumnData(cInfo api.InstanceFull) string {
 	if !cInfo.LastUsedAt.IsZero() {
 		return cInfo.LastUsedAt.Local().Format(dateLayout)
 	}
@@ -957,7 +881,7 @@ func (c *cmdList) LastUsedColumnData(cInfo api.InstanceFull) string {
 	return ""
 }
 
-func (c *cmdList) NumberOfProcessesColumnData(cInfo api.InstanceFull) string {
+func (c *cmdList) numberOfProcessesColumnData(cInfo api.InstanceFull) string {
 	if cInfo.IsActive() && cInfo.State != nil {
 		return fmt.Sprintf("%d", cInfo.State.Processes)
 	}
@@ -967,22 +891,6 @@ func (c *cmdList) NumberOfProcessesColumnData(cInfo api.InstanceFull) string {
 
 func (c *cmdList) locationColumnData(cInfo api.InstanceFull) string {
 	return cInfo.Location
-}
-
-func (c *cmdList) matchByType(cInfo *api.Instance, cState *api.InstanceState, query string) bool {
-	return strings.EqualFold(cInfo.Type, query)
-}
-
-func (c *cmdList) matchByStatus(cInfo *api.Instance, cState *api.InstanceState, query string) bool {
-	return strings.EqualFold(cInfo.Status, query)
-}
-
-func (c *cmdList) matchByArchitecture(cInfo *api.Instance, cState *api.InstanceState, query string) bool {
-	return strings.EqualFold(cInfo.InstancePut.Architecture, query)
-}
-
-func (c *cmdList) matchByLocation(cInfo *api.Instance, cState *api.InstanceState, query string) bool {
-	return strings.EqualFold(cInfo.Location, query)
 }
 
 func (c *cmdList) matchByNet(cState *api.InstanceState, query string, family string) bool {
@@ -1036,12 +944,44 @@ func (c *cmdList) matchByIPV4(_ *api.Instance, cState *api.InstanceState, query 
 
 func (c *cmdList) mapShorthandFilters() {
 	c.shorthandFilters = map[string]func(*api.Instance, *api.InstanceState, string) bool{
-		"type":         c.matchByType,
-		"state":        c.matchByStatus,
-		"status":       c.matchByStatus,
-		"architecture": c.matchByArchitecture,
-		"location":     c.matchByLocation,
-		"ipv4":         c.matchByIPV4,
-		"ipv6":         c.matchByIPV6,
+		"ipv4": c.matchByIPV4,
+		"ipv6": c.matchByIPV6,
 	}
+}
+
+// prepareInstanceServerFilters processes and formats filter criteria
+// for instances, ensuring they are in a format that the server can interpret.
+func prepareInstanceServerFilters(filters []string, i any) []string {
+	formatedFilters := []string{}
+
+	for _, filter := range filters {
+		membs := strings.SplitN(filter, "=", 2)
+		key := membs[0]
+
+		if len(membs) == 1 {
+			regexpValue := key
+			if !strings.Contains(key, "^") && !strings.Contains(key, "$") {
+				regexpValue = "^" + regexpValue + "$"
+			}
+
+			filter = fmt.Sprintf("name=(%s|^%s.*)", regexpValue, key)
+		} else {
+			firstPart := key
+			if strings.Contains(key, ".") {
+				firstPart = strings.Split(key, ".")[0]
+			}
+
+			if !structHasField(reflect.TypeOf(i), firstPart) {
+				filter = fmt.Sprintf("expanded_config.%s", filter)
+			}
+
+			if key == "state" {
+				filter = fmt.Sprintf("status=%s", membs[1])
+			}
+		}
+
+		formatedFilters = append(formatedFilters, filter)
+	}
+
+	return formatedFilters
 }

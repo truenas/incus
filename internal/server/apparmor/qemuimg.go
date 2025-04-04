@@ -12,45 +12,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"text/template"
 
 	"github.com/lxc/incus/v6/internal/server/sys"
 	"github.com/lxc/incus/v6/shared/ioprogress"
 	"github.com/lxc/incus/v6/shared/subprocess"
 )
-
-var qemuImgProfileTpl = template.Must(template.New("qemuImgProfile").Parse(`#include <tunables/global>
-profile "{{ .name }}" flags=(attach_disconnected,mediate_deleted) {
-  #include <abstractions/base>
-
-  capability dac_override,
-  capability dac_read_search,
-  capability ipc_lock,
-
-  /proc/sys/vm/max_map_count r,
-  /sys/devices/**/block/*/queue/max_segments  r,
-  /sys/devices/**/block/*/zoned  r,
-  /sys/devices/system/node r,
-  /sys/devices/system/node/** r,
-
-{{range $index, $element := .allowedCmdPaths}}
-  {{$element}} mixr,
-{{- end }}
-
-  {{ .pathToImg }} rk,
-
-{{- if .dstPath }}
-  {{ .dstPath }} rwk,
-{{- end }}
-
-{{if .libraryPath -}}
-  # Entries from LD_LIBRARY_PATH
-{{range $index, $element := .libraryPath}}
-  {{$element}}/** mr,
-{{- end }}
-{{- end }}
-}
-`))
 
 type nullWriteCloser struct {
 	io.Writer
@@ -91,7 +57,7 @@ func handleWriter(out io.Writer, hand func(int64, int64)) io.Writer {
 // will be added as an allowed command to the AppArmor profile. The remaining elements of the cmd slice are
 // expected to be the qemu-img command and its arguments.
 func QemuImg(sysOS *sys.OS, cmd []string, imgPath string, dstPath string, tracker *ioprogress.ProgressTracker) (string, error) {
-	//It is assumed that command starts with a program which sets resource limits, like prlimit or nice
+	// It is assumed that command starts with a program which sets resource limits, like prlimit or nice
 	allowedCmds := []string{"qemu-img", cmd[0]}
 
 	allowedCmdPaths := []string{}
@@ -165,7 +131,7 @@ func qemuImgProfileLoad(sysOS *sys.OS, imgPath string, dstPath string, allowedCm
 	}
 
 	if string(content) != string(updated) {
-		err = os.WriteFile(profilePath, []byte(updated), 0600)
+		err = os.WriteFile(profilePath, []byte(updated), 0o600)
 		if err != nil {
 			return "", err
 		}

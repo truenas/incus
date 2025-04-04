@@ -561,7 +561,7 @@ func genericVFSBackupVolume(d Driver, vol Volume, tarWriter *instancewriter.Inst
 							return err
 						}
 
-						// Skip any exluded files.
+						// Skip any excluded files.
 						if util.StringHasPrefix(srcPath, exclude...) {
 							return nil
 						}
@@ -597,7 +597,7 @@ func genericVFSBackupVolume(d Driver, vol Volume, tarWriter *instancewriter.Inst
 				fi := instancewriter.FileInfo{
 					FileName:    name,
 					FileSize:    blockDiskSize,
-					FileMode:    0600,
+					FileMode:    0o600,
 					FileModTime: time.Now(),
 				}
 
@@ -808,7 +808,7 @@ func genericVFSBackupUnpack(d Driver, sysOS *sys.OS, vol Volume, snapshots []str
 					}
 
 					// Open block file (use O_CREATE to support drivers that use image files).
-					to, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
+					to, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
 					if err != nil {
 						return fmt.Errorf("Error opening file for writing %q: %w", targetPath, err)
 					}
@@ -1007,7 +1007,7 @@ func genericVFSCopyVolume(d Driver, initVolume func(vol Volume) (revert.Hook, er
 
 	// Define function to send a filesystem volume.
 	sendFSVol := func(srcPath string, targetPath string) error {
-		d.Logger().Debug("Copying fileystem volume", logger.Ctx{"sourcePath": srcPath, "targetPath": targetPath, "bwlimit": bwlimit, "rsyncArgs": rsyncArgs})
+		d.Logger().Debug("Copying filesystem volume", logger.Ctx{"sourcePath": srcPath, "targetPath": targetPath, "bwlimit": bwlimit, "rsyncArgs": rsyncArgs})
 		_, err := rsync.LocalCopy(srcPath, targetPath, bwlimit, true, rsyncArgs...)
 
 		status, _ := linux.ExitStatus(err)

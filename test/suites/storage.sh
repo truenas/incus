@@ -14,8 +14,9 @@ test_storage() {
   local storage_pool storage_volume
   storage_pool="incustest-$(basename "${INCUS_DIR}")-pool"
   storage_volume="${storage_pool}-vol"
-
-  if [ "${incus_backend}" = "truenas" ]; then
+  if [ "${incus_backend}" = "linstor" ]; then
+      incus storage create "$storage_pool" "$incus_backend" linstor.resource_group.place_count=1 --description foo
+  else if [ "${incus_backend}" = "truenas" ]; then
        incus storage create "$storage_pool" "$incus_backend" "$(truenas_source)/" "$(truenas_api_key)" --description foo
   else
        incus storage create "$storage_pool" "$incus_backend" --description foo
@@ -768,13 +769,13 @@ test_storage() {
   )
 
   # Test applying quota (expected size ranges are in KiB and have an allowable range to account for allocation variations).
-  QUOTA1="20MiB"
-  rootMinKiB1="13800"
-  rootMaxKiB1="23000"
+  QUOTA1="400MiB"
+  rootMinKiB1="320000"
+  rootMaxKiB1="450000"
 
-  QUOTA2="25MiB"
-  rootMinKiB2="18900"
-  rootMaxKiB2="28000"
+  QUOTA2="800MiB"
+  rootMinKiB2="720000"
+  rootMaxKiB2="850000"
 
   if [ "$incus_backend" != "dir" ] && [ "$incus_backend" != "truenas" ]; then # truenas is currently limited to >= 1GiB sizes.
     incus launch testimage quota1
@@ -886,7 +887,9 @@ test_storage() {
   # shellcheck disable=SC2031,2269
   INCUS_DIR="${INCUS_DIR}"
   storage_pool="incustest-$(basename "${INCUS_DIR}")-pool26"
-  if [ "${incus_backend}" = "truenas" ]; then
+  if [ "${incus_backend}" = "linstor" ]; then
+      incus storage create "$storage_pool" "$incus_backend" linstor.resource_group.place_count=1
+  else if [ "${incus_backend}" = "truenas" ]; then
     incus storage create "$storage_pool" "$incus_backend" "$(truenas_source_uuid)" "$(truenas_api_key)"
   else 
     incus storage create "$storage_pool" "$incus_backend"

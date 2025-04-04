@@ -102,7 +102,7 @@ func (c *cmdMigrate) Run(app *cobra.Command, args []string) error {
 
 	defer logFile.Close()
 
-	err = logFile.Chmod(0600)
+	err = logFile.Chmod(0o600)
 	if err != nil {
 		_, _ = logFile.WriteString(fmt.Sprintf("ERROR: %v\n", err))
 		return fmt.Errorf("Failed to set permissions on log file: %w", err)
@@ -350,7 +350,7 @@ func (c *cmdMigrate) Run(app *cobra.Command, args []string) error {
 					return fmt.Errorf("Failed to get OVN southbound database address: %w", err)
 				}
 
-				ovnSB := strings.TrimSpace(strings.Replace(out, "\"", "", -1))
+				ovnSB := strings.TrimSpace(strings.ReplaceAll(out, "\"", ""))
 
 				commands, err := ovnConvert(ovnNB, ovnSB)
 				if err != nil {
@@ -438,7 +438,7 @@ DROP TRIGGER IF EXISTS on_image_alias_delete;
 DROP TRIGGER IF EXISTS on_image_delete;
 DROP TRIGGER IF EXISTS on_instance_backup_delete;
 DROP TRIGGER IF EXISTS on_instance_delete;
-DROP TRIGGER IF EXISTS on_instance_snaphot_delete;
+DROP TRIGGER IF EXISTS on_instance_snapshot_delete;
 DROP TRIGGER IF EXISTS on_network_acl_delete;
 DROP TRIGGER IF EXISTS on_network_delete;
 DROP TRIGGER IF EXISTS on_network_zone_delete;
@@ -617,7 +617,7 @@ Instead this tool will be providing specific commands for each of the servers.`)
 	if linux.IsMountPoint(sourcePaths.daemon) {
 		_, _ = logFile.WriteString("Source daemon path is a mountpoint\n")
 
-		err = os.MkdirAll(targetPaths.daemon, 0711)
+		err = os.MkdirAll(targetPaths.daemon, 0o711)
 		if err != nil {
 			_, _ = logFile.WriteString(fmt.Sprintf("ERROR: %v\n", err))
 			return fmt.Errorf("Failed to create target directory: %w", err)
@@ -673,7 +673,7 @@ Instead this tool will be providing specific commands for each of the servers.`)
 		fmt.Println("=> Writing database patch")
 		_, _ = logFile.WriteString("Writing the database patch\n")
 
-		err = os.WriteFile(filepath.Join(targetPaths.daemon, "database", "patch.global.sql"), []byte(strings.Join(rewriteStatements, "\n")+"\n"), 0600)
+		err = os.WriteFile(filepath.Join(targetPaths.daemon, "database", "patch.global.sql"), []byte(strings.Join(rewriteStatements, "\n")+"\n"), 0o600)
 		if err != nil {
 			_, _ = logFile.WriteString(fmt.Sprintf("ERROR: %v\n", err))
 			return fmt.Errorf("Failed to write database path: %w", err)

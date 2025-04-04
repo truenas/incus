@@ -49,6 +49,7 @@ type ImageServer interface {
 	// Image handling functions
 	GetImages() (images []api.Image, err error)
 	GetImagesAllProjects() (images []api.Image, err error)
+	GetImagesAllProjectsWithFilter(filters []string) (images []api.Image, err error)
 	GetImageFingerprints() (fingerprints []string, err error)
 	GetImagesWithFilter(filters []string) (images []api.Image, err error)
 
@@ -613,8 +614,7 @@ type InstanceConsoleArgs struct {
 
 // The InstanceConsoleLogArgs struct is used to pass additional options during a
 // instance console log request.
-type InstanceConsoleLogArgs struct {
-}
+type InstanceConsoleLogArgs struct{}
 
 // The InstanceExecArgs struct is used to pass additional options during instance exec.
 type InstanceExecArgs struct {

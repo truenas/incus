@@ -41,6 +41,14 @@ test_storage_local_volume_handling() {
       incus storage create "${pool_base}-zfs" zfs size=1GiB
     fi
 
+    if storage_backend_available "linstor"; then
+      if [ -n "${INCUS_LINSTOR_LOCAL_SATELLITE:-}" ]; then
+        incus config set storage.linstor.satellite.name "${INCUS_LINSTOR_LOCAL_SATELLITE}"
+      fi
+
+      incus storage create "${pool_base}-linstor" linstor volume.size=1GiB linstor.resource_group.place_count=1
+    fi
+
     # Test all combinations of our storage drivers
 
     driver="${incus_backend}"
@@ -62,6 +70,10 @@ test_storage_local_volume_handling() {
 
     if [ "$driver" = "lvm" ]; then
       pool_opts="volume.size=25MiB"
+    fi
+
+    if [ "$driver" = "linstor" ]; then
+      pool_opts="volume.size=1GiB linstor.resource_group.place_count=1 linstor.volume.prefix=incus-volume2-"
     fi
 
     if [ -n "${pool_opts}" ]; then
@@ -152,8 +164,8 @@ test_storage_local_volume_handling() {
     fi
     incus storage delete "${pool}1"
 
-    for source_driver in "btrfs" "ceph" "cephfs" "dir" "lvm" "zfs"; do
-      for target_driver in "btrfs" "ceph" "cephfs" "dir" "lvm" "zfs"; do
+    for source_driver in "btrfs" "ceph" "cephfs" "dir" "lvm" "zfs" "linstor"; do
+      for target_driver in "btrfs" "ceph" "cephfs" "dir" "lvm" "zfs" "linstor"; do
         # shellcheck disable=SC2235
         if [ "$source_driver" != "$target_driver" ] \
             && ([ "$incus_backend" = "$source_driver" ] || ([ "$incus_backend" = "ceph" ] && [ "$source_driver" = "cephfs" ] && [ -n "${INCUS_CEPH_CEPHFS:-}" ])) \
@@ -253,7 +265,7 @@ test_storage_local_volume_handling() {
 
           # check snapshot volumes (including config) was overridden from new source and that missing snapshot is
           # present and that the missing snapshot has been removed.
-          # Note: We are currently diffing the snapshots by name and creation date, so infact existing
+          # Note: We are currently diffing the snapshots by name and creation date, so in fact existing
           # snapshots of the same name and cretion date won't be overwritten even if their config or contents is different.
           incus storage volume get "${target_pool}" vol5 user.foo | grep -Fx "snapremovevol5"
           incus storage volume get "${target_pool}" vol5/snap0 user.foo | grep -Fx "snap0vol5"

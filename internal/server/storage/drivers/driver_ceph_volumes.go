@@ -98,7 +98,7 @@ func (d *ceph) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.Ope
 			// be restored in the future and a new cached image volume will be created instead.
 			if volSizeBytes != poolVolSizeBytes {
 				d.logger.Debug("Renaming deleted cached image volume so that regeneration is used", logger.Ctx{"fingerprint": vol.Name()})
-				randomVol := NewVolume(d, d.name, deletedVol.volType, deletedVol.contentType, strings.Replace(uuid.New().String(), "-", "", -1), deletedVol.config, deletedVol.poolConfig)
+				randomVol := NewVolume(d, d.name, deletedVol.volType, deletedVol.contentType, strings.ReplaceAll(uuid.New().String(), "-", ""), deletedVol.config, deletedVol.poolConfig)
 				err = renameVolume(d.getRBDVolumeName(deletedVol, "", true), d.getRBDVolumeName(randomVol, "", true))
 				if err != nil {
 					return err
@@ -674,19 +674,19 @@ func (d *ceph) DeleteVolume(vol Volume, op *operations.Operation) error {
 			return err
 		}
 
-		hasDependendantSnapshots := false
+		hasDependentSnapshots := false
 
 		if hasReadonlySnapshot {
-			dependantSnapshots, err := d.rbdListSnapshotClones(vol, "readonly")
+			dependentSnapshots, err := d.rbdListSnapshotClones(vol, "readonly")
 			if err != nil && !response.IsNotFoundError(err) {
 				return err
 			}
 
-			hasDependendantSnapshots = len(dependantSnapshots) > 0
+			hasDependentSnapshots = len(dependentSnapshots) > 0
 		}
 
-		if hasDependendantSnapshots {
-			// If the image has dependant snapshots, then we just mark it as deleted, but don't
+		if hasDependentSnapshots {
+			// If the image has dependent snapshots, then we just mark it as deleted, but don't
 			// actually remove it yet.
 			err = d.rbdMarkVolumeDeleted(vol, vol.name)
 			if err != nil {
@@ -772,7 +772,6 @@ func (d *ceph) hasVolume(rbdVolumeName string) (bool, error) {
 		"info",
 		rbdVolumeName,
 	)
-
 	if err != nil {
 		runErr, ok := err.(subprocess.RunError)
 		if ok {
@@ -1008,7 +1007,7 @@ func (d *ceph) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool, o
 			}
 
 			if inUse {
-				return ErrInUse // We don't allow online shrinking of filesytem volumes.
+				return ErrInUse // We don't allow online shrinking of filesystem volumes.
 			}
 
 			// Shrink filesystem first. Pass allowUnsafeResize to allow disabling of filesystem

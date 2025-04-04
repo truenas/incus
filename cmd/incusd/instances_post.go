@@ -93,7 +93,7 @@ func ensureDownloadedImageFitWithinBudget(ctx context.Context, s *state.State, r
 }
 
 func createFromImage(s *state.State, r *http.Request, p api.Project, profiles []api.Profile, img *api.Image, imgAlias string, req *api.InstancesPost) response.Response {
-	if s.DB.Cluster.LocalNodeIsEvacuated() {
+	if s.ServerClustered && s.DB.Cluster.LocalNodeIsEvacuated() {
 		return response.Forbidden(fmt.Errorf("Cluster member is evacuated"))
 	}
 
@@ -130,7 +130,7 @@ func createFromImage(s *state.State, r *http.Request, p api.Project, profiles []
 			return fmt.Errorf("Image not provided for instance creation")
 		}
 
-		args.Architecture, err = osarch.ArchitectureId(img.Architecture)
+		args.Architecture, err = osarch.ArchitectureID(img.Architecture)
 		if err != nil {
 			return err
 		}
@@ -156,7 +156,7 @@ func createFromImage(s *state.State, r *http.Request, p api.Project, profiles []
 }
 
 func createFromNone(s *state.State, r *http.Request, projectName string, profiles []api.Profile, req *api.InstancesPost) response.Response {
-	if s.DB.Cluster.LocalNodeIsEvacuated() {
+	if s.ServerClustered && s.DB.Cluster.LocalNodeIsEvacuated() {
 		return response.Forbidden(fmt.Errorf("Cluster member is evacuated"))
 	}
 
@@ -179,7 +179,7 @@ func createFromNone(s *state.State, r *http.Request, projectName string, profile
 	}
 
 	if req.Architecture != "" {
-		architecture, err := osarch.ArchitectureId(req.Architecture)
+		architecture, err := osarch.ArchitectureID(req.Architecture)
 		if err != nil {
 			return response.InternalError(err)
 		}
@@ -209,7 +209,7 @@ func createFromNone(s *state.State, r *http.Request, projectName string, profile
 }
 
 func createFromMigration(ctx context.Context, s *state.State, r *http.Request, projectName string, profiles []api.Profile, req *api.InstancesPost) response.Response {
-	if s.DB.Cluster.LocalNodeIsEvacuated() && r != nil && r.Context().Value(request.CtxProtocol) != "cluster" {
+	if s.ServerClustered && r != nil && r.Context().Value(request.CtxProtocol) != "cluster" && s.DB.Cluster.LocalNodeIsEvacuated() {
 		return response.Forbidden(fmt.Errorf("Cluster member is evacuated"))
 	}
 
@@ -219,7 +219,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 	}
 
 	// Parse the architecture name
-	architecture, err := osarch.ArchitectureId(req.Architecture)
+	architecture, err := osarch.ArchitectureID(req.Architecture)
 	if err != nil {
 		return response.BadRequest(err)
 	}
@@ -474,7 +474,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 }
 
 func createFromCopy(ctx context.Context, s *state.State, r *http.Request, projectName string, profiles []api.Profile, req *api.InstancesPost) response.Response {
-	if s.DB.Cluster.LocalNodeIsEvacuated() {
+	if s.ServerClustered && s.DB.Cluster.LocalNodeIsEvacuated() {
 		return response.Forbidden(fmt.Errorf("Cluster member is evacuated"))
 	}
 
@@ -956,12 +956,12 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 	var targetMemberInfo *db.NodeInfo
 	var targetGroupName string
 
-	err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
-		target := request.QueryParam(r, "target")
-		if !s.ServerClustered && target != "" {
-			return api.StatusErrorf(http.StatusBadRequest, "Target only allowed when clustered")
-		}
+	target := request.QueryParam(r, "target")
+	if !s.ServerClustered && target != "" {
+		return response.BadRequest(fmt.Errorf("Target only allowed when clustered"))
+	}
 
+	err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
 		dbProject, err := dbCluster.GetProject(ctx, tx.Tx(), targetProjectName)
 		if err != nil {
 			return fmt.Errorf("Failed loading project: %w", err)
@@ -1060,12 +1060,12 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 				return err
 			}
 
-			dbProfileConfigs, err := dbCluster.GetConfig(ctx, tx.Tx(), "profile")
+			dbProfileConfigs, err := dbCluster.GetAllProfileConfigs(ctx, tx.Tx())
 			if err != nil {
 				return err
 			}
 
-			dbProfileDevices, err := dbCluster.GetDevices(ctx, tx.Tx(), "profile")
+			dbProfileDevices, err := dbCluster.GetAllProfileDevices(ctx, tx.Tx())
 			if err != nil {
 				return err
 			}
@@ -1128,7 +1128,7 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 				}
 
 				if defaultArch != "" {
-					defaultArchID, err := osarch.ArchitectureId(defaultArch)
+					defaultArchID, err := osarch.ArchitectureID(defaultArch)
 					if err != nil {
 						return err
 					}

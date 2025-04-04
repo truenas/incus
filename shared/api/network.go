@@ -125,7 +125,7 @@ type NetworkLease struct {
 	Hostname string `json:"hostname" yaml:"hostname"`
 
 	// The MAC address
-	// Example: 00:16:3e:2c:89:d9
+	// Example: 10:66:6a:2c:89:d9
 	Hwaddr string `json:"hwaddr" yaml:"hwaddr"`
 
 	// The IP address
@@ -151,10 +151,10 @@ type NetworkState struct {
 	Addresses []NetworkStateAddress `json:"addresses" yaml:"addresses"`
 
 	// Interface counters
-	Counters NetworkStateCounters `json:"counters" yaml:"counters"`
+	Counters *NetworkStateCounters `json:"counters" yaml:"counters"`
 
 	// MAC address
-	// Example: 00:16:3e:5a:83:57
+	// Example: 10:66:6a:5a:83:57
 	Hwaddr string `json:"hwaddr" yaml:"hwaddr"`
 
 	// MTU
@@ -328,6 +328,12 @@ type NetworkStateOVN struct {
 	//
 	// API extension: network_state_ovn_lr
 	LogicalRouter string `json:"logical_router" yaml:"logical_router"`
+
+	// OVN logical switch name
+	// Example: incus-net1-ls-int
+	//
+	// API extension: network_state_ovn_ls
+	LogicalSwitch string `json:"logical_switch" yaml:"logical_switch"`
 
 	// OVN network uplink ipv4 address
 	// Example: 10.0.0.1

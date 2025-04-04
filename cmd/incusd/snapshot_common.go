@@ -26,7 +26,7 @@ var SnapshotScheduleAliases = map[string]string{
 }
 
 func snapshotIsScheduledNow(spec string, subjectID int64) bool {
-	var result = false
+	result := false
 
 	specs := buildCronSpecs(spec, subjectID)
 	for _, curSpec := range specs {
@@ -79,8 +79,8 @@ func getCronSyntax(spec string, subjectID int64) string {
 }
 
 func getObfuscatedTimeValuesForSubject(subjectID int64) (string, string) {
-	var minuteResult = "0"
-	var hourResult = "0"
+	minuteResult := "0"
+	hourResult := "0"
 
 	minSequence, minSequenceErr := localUtil.GenerateSequenceInt64(0, 60, 1)
 	min, minErr := localUtil.GetStableRandomInt64FromList(subjectID, minSequence)
@@ -107,7 +107,7 @@ func cronSpecIsNow(spec string) (bool, error) {
 	now := time.Now()
 
 	// Truncate the time now back to the start of the minute.
-	// This is neded because the cron scheduler will add a minute to the scheduled time
+	// This is needed because the cron scheduler will add a minute to the scheduled time
 	// and we don't want the next scheduled time to roll over to the next minute and break
 	// the time comparison below.
 	now = now.Truncate(time.Minute)

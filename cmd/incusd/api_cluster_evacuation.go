@@ -38,8 +38,10 @@ import (
 	"github.com/lxc/incus/v6/shared/subprocess"
 )
 
-type evacuateStopFunc func(inst instance.Instance, action string) error
-type evacuateMigrateFunc func(ctx context.Context, s *state.State, inst instance.Instance, sourceMemberInfo *db.NodeInfo, targetMemberInfo *db.NodeInfo, live bool, startInstance bool, metadata map[string]any, op *operations.Operation) error
+type (
+	evacuateStopFunc    func(inst instance.Instance, action string) error
+	evacuateMigrateFunc func(ctx context.Context, s *state.State, inst instance.Instance, sourceMemberInfo *db.NodeInfo, targetMemberInfo *db.NodeInfo, live bool, startInstance bool, metadata map[string]any, op *operations.Operation) error
+)
 
 type evacuateOpts struct {
 	s               *state.State
@@ -225,6 +227,9 @@ func evacuateInstancesFunc(ctx context.Context, inst instance.Instance, opts eva
 			// Done with this instance.
 			return nil
 		}
+	} else if !isRunning {
+		// Can't live migrate if we're stopped.
+		action = "migrate"
 	}
 
 	// Find a new location for the instance.
