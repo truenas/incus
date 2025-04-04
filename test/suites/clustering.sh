@@ -1001,6 +1001,9 @@ test_clustering_storage_single_node() {
   if [ "${poolDriver}" = "ceph" ]; then
       driver_config="source=incustest-$(basename "${TEST_DIR}")-pool1"
   fi
+  if [ "${poolDriver}" = "truenas" ]; then
+      driver_config="$(truenas_source)/incustest-$(basename "${TEST_DIR}")-pool1 $(truenas_api_key)"
+  fi
   driver_config_node="${driver_config}"
   if [ "${poolDriver}" = "zfs" ]; then
       driver_config_node="${driver_config_node} zfs.pool_name=pool1-$(basename "${TEST_DIR}")-${ns1}"
