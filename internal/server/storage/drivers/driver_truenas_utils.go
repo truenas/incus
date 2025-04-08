@@ -10,12 +10,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lxc/incus/v6/shared/api"
+	"github.com/lxc/incus/v6/shared/revert"
 	"github.com/lxc/incus/v6/shared/subprocess"
+	"github.com/lxc/incus/v6/shared/units"
 )
 
 const (
 	tnToolName              = "truenas_incus_ctl"
-	tnMinVersion            = "0.4.2" // added additional repplication options
+	tnMinVersion            = "0.5.0" // iscsi support
 	tnVerifyDatasetCreation = false   // explicitly check that the dataset is created, work around for bugs in certain versions of the tool.
 )
 
@@ -28,8 +30,8 @@ func (d *truenas) dataset(vol Volume, deleted bool) string {
 	*/
 
 	// need to disambiguate different images based on the root.img filesystem
-	//if vol.volType == VolumeTypeImage && vol.contentType == ContentTypeFS && d.isBlockBacked(vol) {
-	if deleted && vol.volType == VolumeTypeImage && ((vol.contentType == ContentTypeFS && needsFsImgVol(vol)) || isFsImgVol(vol)) {
+	if vol.volType == VolumeTypeImage && vol.contentType == ContentTypeFS && d.isBlockBacked(vol) {
+		//if deleted && vol.volType == VolumeTypeImage && ((vol.contentType == ContentTypeFS && needsFsImgVol(vol)) || isFsImgVol(vol)) {
 		name = fmt.Sprintf("%s_%s", name, vol.ConfigBlockFilesystem())
 	}
 
@@ -119,9 +121,13 @@ func (d *truenas) setDatasetProperties(dataset string, options ...string) error 
 
 	// TODO: either move the "--" prepending here, or have the -o syntax work!
 
-	optionString := optionsToOptionString(options...)
-	if optionString != "" {
-		args = append(args, "-o", optionString)
+	// optionString := optionsToOptionString(options...)
+	// if optionString != "" {
+	// 	args = append(args, "-o", optionString)
+	// }
+
+	for _, option := range options {
+		args = append(args, fmt.Sprintf("--%s", option))
 	}
 
 	args = append(args, dataset)
@@ -343,6 +349,36 @@ func (d *truenas) createDataset(dataset string, options ...string) error {
 	return nil
 }
 
+func (d *truenas) createVolume(dataset string, size int64, options ...string) error {
+	args := []string{"dataset", "create", "-s", "-V", fmt.Sprintf("%d", size)}
+
+	// for _, option := range options {
+	// 	args = append(args, "-o")
+	// 	args = append(args, option)
+	// }
+
+	for _, option := range options {
+		args = append(args, fmt.Sprintf("--%s", option))
+	}
+
+	// optionString := optionsToOptionString(options...)
+	// if optionString != "" {
+	// 	args = append(args, "-o", optionString)
+	// }
+
+	args = append(args, "--managedby", tnDefaultSettings["managedby"], "--comments", tnDefaultSettings["comments"])
+
+	args = append(args, dataset)
+
+	out, err := d.runTool(args...)
+	_ = out
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (d *truenas) createNfsShare(dataset string) error {
 	args := []string{"share", "nfs"}
 
@@ -378,13 +414,94 @@ func (d *truenas) deleteNfsShare(dataset string) error {
 	return nil
 }
 
-func (d *truenas) deleteDataset(dataset string, options ...string) error {
+func (d *truenas) createIscsiShare(dataset string) error {
+	args := []string{"share", "iscsi", "create"}
+
+	args = append(args, dataset)
+
+	out, err := d.runTool(args...)
+	_ = out
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *truenas) deleteIscsiShare(dataset string) error {
+	out, err := d.runTool("share", "iscsi", "delete", dataset)
+	_ = out
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// locates a ZFS volume if already active. Returns devpath if activated, "" if not, or an error
+func (d *truenas) locateIscsiDataset(dataset string) (string, error) {
+
+	reverter := revert.New()
+	defer reverter.Fail()
+
+	volDiskPath, err := d.runTool("share", "iscsi", "locate", dataset)
+	if err != nil {
+		return "", err
+	}
+
+	volDiskPath = strings.TrimSpace(volDiskPath)
+
+	return volDiskPath, nil
+}
+
+// activateVolume activates a ZFS volume if not already active. Returns devpath if activated, "" if not.
+func (d *truenas) activateIscsiDataset(dataset string) (string, error) {
+	reverter := revert.New()
+	defer reverter.Fail()
+
+	volDiskPath, err := d.runTool("share", "iscsi", "activate", dataset)
+	if err != nil {
+		return "", err
+	}
+	reverter.Add(func() { _ = d.deactivateIscsiDataset(dataset) })
+	volDiskPath = strings.TrimSpace(volDiskPath)
+
+	if volDiskPath != "" {
+		reverter.Success()
+		return volDiskPath, nil
+	}
+
+	return "", fmt.Errorf("No path for activated TrueNAS volume: %v", dataset)
+}
+
+// deactivateVolume deactivates a ZFS volume if activate. Returns true if deactivated, false if not.
+func (d *truenas) deactivateIscsiDataset(dataset string) error {
+	_, err := d.runTool("share", "iscsi", "deactivate", dataset)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *truenas) deleteSnapshot(snapshot string, recursive bool, options ...string) error {
+	if strings.Count(snapshot, "@") != 1 {
+		return fmt.Errorf("invalid snapshot name: %s", snapshot)
+	}
+
+	return d.deleteDataset(snapshot, recursive, options...)
+}
+
+func (d *truenas) deleteDataset(dataset string, recursive bool, options ...string) error {
 	args := []string{d.getDatasetOrSnapshot(dataset), "delete"}
 
-	// for _, option := range options {
-	// 	args = append(args, "-o")
-	// 	args = append(args, option)
-	// }
+	if recursive {
+		args = append(args, "-r")
+	}
+
+	for _, option := range options {
+		args = append(args, fmt.Sprintf("--%s", option))
+	}
 
 	args = append(args, dataset)
 
@@ -473,21 +590,31 @@ func (d *truenas) getDatasetsAndProperties(datasets []string, properties []strin
 }
 
 // same as renameDataset, except that there's no point updating shares on a snapshot rename
-func (d *truenas) renameSnapshot(sourceDataset string, destDataset string) (string, error) {
+func (d *truenas) renameSnapshot(sourceDataset string, destDataset string) error {
 	return d.renameDataset(sourceDataset, destDataset, false)
 }
 
 // will rename a dataset, or snapshot. updateShares is relatively expensive if there is no possibility of there being a share
-func (d *truenas) renameDataset(sourceDataset string, destDataset string, updateShares bool) (string, error) {
+func (d *truenas) renameDataset(sourceDataset string, destDataset string, updateShares bool) error {
 	args := []string{d.getDatasetOrSnapshot(sourceDataset), "rename"}
 
 	if updateShares {
+		_ = d.deleteIscsiShare(sourceDataset) // TODO: remove this when --update-shares supports iscsi
 		args = append(args, "--update-shares")
 	}
 
 	args = append(args, sourceDataset, destDataset)
 
-	return d.runTool(args...)
+	_, err := d.runTool(args...)
+	if err != nil {
+		return err
+	}
+
+	if updateShares {
+		_ = d.createIscsiShare(destDataset) // TODO: remove this when --update-shares supports iscsi
+	}
+
+	return nil
 }
 
 func (d *truenas) deleteDatasetRecursive(dataset string) error {
@@ -498,8 +625,7 @@ func (d *truenas) deleteDatasetRecursive(dataset string) error {
 	}
 
 	// Delete the dataset (and any snapshots left).
-	out, err := d.runTool(d.getDatasetOrSnapshot(dataset), "delete", "-r", dataset)
-	_ = out
+	err = d.deleteDataset(dataset, true)
 	if err != nil {
 		return err
 	}
@@ -547,20 +673,18 @@ func (d *truenas) version() (string, error) {
 }
 
 func (d *truenas) setBlocksizeFromConfig(vol Volume) error {
-	// size := vol.ExpandedConfig("zfs.blocksize")
-	// if size == "" {
-	// 	return nil
-	// }
+	size := vol.ExpandedConfig("zfs.blocksize")
+	if size == "" {
+		return nil
+	}
 
-	// Convert to bytes.
-	// sizeBytes, err := units.ParseByteSizeString(size)
-	// if err != nil {
-	// 	return err
-	// }
+	//Convert to bytes.
+	sizeBytes, err := units.ParseByteSizeString(size)
+	if err != nil {
+		return err
+	}
 
-	// return d.setBlocksize(vol, sizeBytes)
-
-	return nil
+	return d.setBlocksize(vol, sizeBytes)
 }
 
 func (d *truenas) setBlocksize(vol Volume, size int64) error {

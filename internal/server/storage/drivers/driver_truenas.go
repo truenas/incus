@@ -117,7 +117,7 @@ func (d *truenas) Info() Info {
 		Remote:                       d.isRemote(),
 		VolumeTypes:                  []VolumeType{VolumeTypeCustom, VolumeTypeImage, VolumeTypeContainer, VolumeTypeVM},
 		VolumeMultiNode:              d.isRemote(),
-		BlockBacking:                 false,
+		BlockBacking:                 true,
 		RunningCopyFreeze:            true,
 		DirectIO:                     false,
 		IOUring:                      false,
@@ -303,8 +303,7 @@ func (d *truenas) Delete(op *operations.Operation) error {
 		}
 
 		// Delete the dataset.
-		out, err := d.runTool("dataset", "delete", "-r", d.config["truenas.dataset"])
-		_ = out
+		err = d.deleteDataset(d.config["truenas.dataset"], true)
 		if err != nil {
 			return err
 		}
