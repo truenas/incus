@@ -444,7 +444,7 @@ func (d *truenas) locateIscsiDataset(dataset string) (string, error) {
 	reverter := revert.New()
 	defer reverter.Fail()
 
-	volDiskPath, err := d.runTool("share", "iscsi", "locate", dataset)
+	volDiskPath, err := d.runTool("share", "iscsi", "locate", "--parsable", dataset)
 	if err != nil {
 		return "", err
 	}
@@ -459,7 +459,7 @@ func (d *truenas) activateIscsiDataset(dataset string) (string, error) {
 	reverter := revert.New()
 	defer reverter.Fail()
 
-	volDiskPath, err := d.runTool("share", "iscsi", "activate", dataset)
+	volDiskPath, err := d.runTool("share", "iscsi", "activate", "--parsable", dataset)
 	if err != nil {
 		return "", err
 	}
