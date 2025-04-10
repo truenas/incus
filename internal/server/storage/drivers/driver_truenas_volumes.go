@@ -1004,14 +1004,14 @@ func (d *truenas) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 				l.Debug("TrueNAS volume filesystem shrunk")
 
 				// Shrink the block device.
-				err = d.setDatasetProperties(d.dataset(vol, false), fmt.Sprintf("volume=%d", sizeBytes)) //volsize
+				err = d.setDatasetProperties(d.dataset(vol, false), fmt.Sprintf("volsize=%d", sizeBytes))
 				if err != nil {
 					// note: this should've worked, but the middleware is currently preventing it.
 					return err
 				}
 			} else if sizeBytes > oldVolSizeBytes {
 				// Grow block device first.
-				err = d.setDatasetProperties(d.dataset(vol, false), fmt.Sprintf("volume=%d", sizeBytes)) //volsize
+				err = d.setDatasetProperties(d.dataset(vol, false), fmt.Sprintf("volsize=%d", sizeBytes))
 				if err != nil {
 					return err
 				}
@@ -1040,7 +1040,7 @@ func (d *truenas) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 				}
 			}
 
-			err = d.setDatasetProperties(d.dataset(vol, false), fmt.Sprintf("volume=%d", sizeBytes)) //volsize
+			err = d.setDatasetProperties(d.dataset(vol, false), fmt.Sprintf("volsize=%d", sizeBytes))
 			if err != nil {
 				return err
 			}
