@@ -311,6 +311,19 @@ func (d *truenas) createDatasets(datasets []string, options ...string) error {
 	return nil
 }
 
+// create a dataset by cloning a snapshot
+func (d *truenas) cloneSnapshot(srcSnapshot string, destDataset string) error {
+	args := []string{"snapshot", "clone", srcSnapshot, destDataset}
+
+	// Clone the snapshot.
+	_, err := d.runTool(args...)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // take a recursive snapshot of dataset@snapname, and optionally delete the old snapshot first
 func (d *truenas) createSnapshot(snapName string, deleteFirst bool) error {
 	args := []string{"snapshot", "create", "-r"}
@@ -414,8 +427,12 @@ func (d *truenas) deleteNfsShare(dataset string) error {
 	return nil
 }
 
-func (d *truenas) createIscsiShare(dataset string) error {
+func (d *truenas) createIscsiShare(dataset string, readonly bool) error {
 	args := []string{"share", "iscsi", "create"}
+
+	if readonly {
+		args = append(args, "--readonly")
+	}
 
 	args = append(args, dataset)
 
@@ -611,7 +628,7 @@ func (d *truenas) renameDataset(sourceDataset string, destDataset string, update
 	}
 
 	if updateShares {
-		_ = d.createIscsiShare(destDataset) // TODO: remove this when --update-shares supports iscsi
+		_ = d.createIscsiShare(destDataset, false) // TODO: remove this when --update-shares supports iscsi
 	}
 
 	return nil
