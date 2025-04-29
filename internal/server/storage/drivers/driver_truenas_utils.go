@@ -17,7 +17,7 @@ import (
 
 const (
 	tnToolName              = "truenas_incus_ctl"
-	tnMinVersion            = "0.5.0" // iscsi support
+	tnMinVersion            = "0.5.1" // iscsi support with target-prefix
 	tnVerifyDatasetCreation = false   // explicitly check that the dataset is created, work around for bugs in certain versions of the tool.
 )
 
@@ -428,7 +428,7 @@ func (d *truenas) deleteNfsShare(dataset string) error {
 }
 
 func (d *truenas) createIscsiShare(dataset string, readonly bool) error {
-	args := []string{"share", "iscsi", "create"}
+	args := []string{"share", "iscsi", "create", "--target-prefix=incus"}
 
 	if readonly {
 		args = append(args, "--readonly")
@@ -446,7 +446,7 @@ func (d *truenas) createIscsiShare(dataset string, readonly bool) error {
 }
 
 func (d *truenas) deleteIscsiShare(dataset string) error {
-	out, err := d.runTool("share", "iscsi", "delete", dataset)
+	out, err := d.runTool("share", "iscsi", "delete", "--target-prefix=incus", dataset)
 	_ = out
 	if err != nil {
 		return err
@@ -461,7 +461,7 @@ func (d *truenas) locateIscsiDataset(dataset string) (string, error) {
 	reverter := revert.New()
 	defer reverter.Fail()
 
-	volDiskPath, err := d.runTool("share", "iscsi", "locate", "--parsable", dataset)
+	volDiskPath, err := d.runTool("share", "iscsi", "locate", "--target-prefix=incus", "--parsable", dataset)
 	if err != nil {
 		return "", err
 	}
@@ -476,7 +476,7 @@ func (d *truenas) activateIscsiDataset(dataset string) (string, error) {
 	reverter := revert.New()
 	defer reverter.Fail()
 
-	volDiskPath, err := d.runTool("share", "iscsi", "activate", "--parsable", dataset)
+	volDiskPath, err := d.runTool("share", "iscsi", "activate", "--target-prefix=incus", "--parsable", dataset)
 	if err != nil {
 		return "", err
 	}
@@ -493,7 +493,7 @@ func (d *truenas) activateIscsiDataset(dataset string) (string, error) {
 
 // deactivateVolume deactivates a ZFS volume if activate. Returns true if deactivated, false if not.
 func (d *truenas) deactivateIscsiDataset(dataset string) error {
-	_, err := d.runTool("share", "iscsi", "deactivate", dataset)
+	_, err := d.runTool("share", "iscsi", "deactivate", "--target-prefix=incus", dataset)
 	if err != nil {
 		return err
 	}
