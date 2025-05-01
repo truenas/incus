@@ -1217,7 +1217,7 @@ func (d *truenas) ListVolumes() ([]Volume, error) {
 		// Detect if a volume is block content type using only the dataset type.
 		isBlock := zfsContentType == "volume"
 
-		if volType == VolumeTypeVM && /*!isBlock*/ !strings.HasSuffix(volName, zfsBlockVolSuffix) {
+		if volType == VolumeTypeVM && (!isBlock || !strings.HasSuffix(volName, zfsBlockVolSuffix)) {
 			continue // Ignore VM filesystem volumes as we will just return the VM's block volume.
 		}
 
@@ -1276,24 +1276,16 @@ func (d *truenas) activateVolume(vol Volume) (bool, string, error) {
 	dataset := d.dataset(vol, false)
 
 	// Check if already active.
-	devPath, err := d.locateIscsiDataset(dataset)
+	didActivate, devPath, err := d.locateOrActivateIscsiDataset(dataset)
 	if err != nil {
 		return false, "", err
 	}
 
-	// if no path found, then we need to activate.
-	if devPath == "" {
-		devPath, err = d.activateIscsiDataset(dataset)
-		if err != nil {
-			return false, "", fmt.Errorf("Failed to activate volume: %v", err)
-		}
-
+	if didActivate {
 		d.logger.Debug("Activated TrueNAS volume", logger.Ctx{"volName": vol.Name(), "dev": dataset})
-
-		return true, devPath, nil
 	}
 
-	return false, devPath, nil
+	return didActivate, devPath, nil
 }
 
 // deactivateVolume deactivates a ZFS volume if activate. Returns true if deactivated, false if not.
@@ -1305,23 +1297,16 @@ func (d *truenas) deactivateVolume(vol Volume) (bool, error) {
 	dataset := d.dataset(vol, false)
 
 	// Check if currently active.
-	devPath, err := d.locateIscsiDataset(dataset)
+	didDeactivate, err := d.deactivateIscsiDatasetIfActive(dataset)
 	if err != nil {
-		return false, fmt.Errorf("Failed locating zvol for deactivation: %w", err)
+		return false, fmt.Errorf("Failed deactivating TrueNAS volume: %w", err)
 	}
 
-	// if a path found, then we need to deactivate.
-	if devPath != "" {
-		err = d.deactivateIscsiDataset(dataset)
-		if err != nil {
-			return false, fmt.Errorf("Failed to deactivate zvol: %w", err)
-		}
+	if didDeactivate {
 		d.logger.Debug("Deactivated TrueNAS volume", logger.Ctx{"volName": vol.name, "dev": dataset})
-
-		return true, nil
 	}
 
-	return false, nil
+	return didDeactivate, nil
 }
 
 func (d *truenas) activateAndMountFsImg(vol Volume, op *operations.Operation) error {
