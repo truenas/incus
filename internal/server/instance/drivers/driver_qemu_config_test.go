@@ -1,7 +1,6 @@
 package drivers
 
 import (
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -19,7 +18,7 @@ func TestQemuConfigTemplates(t *testing.T) {
 
 	runTest := func(expected string, sections []cfg.Section) {
 		t.Run(expected, func(t *testing.T) {
-			actual := normalize(qemuStringifyCfg(sections...).String())
+			actual := normalize(qemuStringifyCfgPredictably(sections...).String())
 			expected = normalize(expected)
 			if actual != expected {
 				t.Errorf("Expected: %s. Got: %s", expected, actual)
@@ -35,9 +34,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuBaseOpts{architecture: osarch.ARCH_64BIT_INTEL_X86},
 			`# Machine
 			[machine]
+			accel = "kvm"
 			graphics = "off"
 			type = "q35"
-			accel = "kvm"
 			usb = "off"
 
 			[global]
@@ -56,10 +55,10 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuBaseOpts{architecture: osarch.ARCH_64BIT_ARMV8_LITTLE_ENDIAN},
 			`# Machine
 			[machine]
+			accel = "kvm"
+			gic-version = "max"
 			graphics = "off"
 			type = "virt"
-			gic-version = "max"
-			accel = "kvm"
 			usb = "off"
 
 			[boot-opts]
@@ -68,10 +67,10 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuBaseOpts{architecture: osarch.ARCH_64BIT_POWERPC_LITTLE_ENDIAN},
 			`# Machine
 			[machine]
+			accel = "kvm"
+			cap-large-decr = "off"
 			graphics = "off"
 			type = "pseries"
-			cap-large-decr = "off"
-			accel = "kvm"
 			usb = "off"
 
 			[boot-opts]
@@ -80,9 +79,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuBaseOpts{architecture: osarch.ARCH_64BIT_S390_BIG_ENDIAN},
 			`# Machine
 			[machine]
+			accel = "kvm"
 			graphics = "off"
 			type = "s390-ccw-virtio"
-			accel = "kvm"
 			usb = "off"
 
 			[boot-opts]
@@ -99,15 +98,19 @@ func TestQemuConfigTemplates(t *testing.T) {
 			opts     qemuMemoryOpts
 			expected string
 		}{{
-			qemuMemoryOpts{4096},
+			qemuMemoryOpts{4096, 16384},
 			`# Memory
 			[memory]
-			size = "4096M"`,
+			maxmem = "16384M"
+			size = "4096M"
+			slots = "8"`,
 		}, {
-			qemuMemoryOpts{8192},
+			qemuMemoryOpts{8192, 16384},
 			`# Memory
 			[memory]
-			size = "8192M"`,
+			maxmem = "16384M"
+			size = "8192M"
+			slots = "8"`,
 		}}
 		for _, tc := range testCases {
 			runTest(tc.expected, qemuMemory(&tc.opts))
@@ -122,9 +125,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuSerialOpts{qemuDevOpts{"pci", "qemu_pcie0", "00.5", false}, "qemu_serial-chardev", 32},
 			`# Virtual serial bus
 			[device "dev-qemu_serial"]
-			driver = "virtio-serial-pci"
-			bus = "qemu_pcie0"
 			addr = "00.5"
+			bus = "qemu_pcie0"
+			driver = "virtio-serial-pci"
 
 			# Serial identifier
 			[chardev "qemu_serial-chardev"]
@@ -132,15 +135,15 @@ func TestQemuConfigTemplates(t *testing.T) {
 			size = "32B"
 
 			[device "qemu_serial"]
+			bus = "dev-qemu_serial.0"
+			chardev = "qemu_serial-chardev"
 			driver = "virtserialport"
 			name = "org.linuxcontainers.incus"
-			chardev = "qemu_serial-chardev"
-			bus = "dev-qemu_serial.0"
 
 			[device "qemu_serial_legacy"]
+			bus = "dev-qemu_serial.0"
 			driver = "virtserialport"
 			name = "org.linuxcontainers.lxd"
-			bus = "dev-qemu_serial.0"
 
 			# Spice agent
 			[chardev "qemu_spice-chardev"]
@@ -148,10 +151,10 @@ func TestQemuConfigTemplates(t *testing.T) {
 			name = "vdagent"
 
 			[device "qemu_spice"]
+			bus = "dev-qemu_serial.0"
+			chardev = "qemu_spice-chardev"
 			driver = "virtserialport"
 			name = "com.redhat.spice.0"
-			chardev = "qemu_spice-chardev"
-			bus = "dev-qemu_serial.0"
 
 			# Spice folder
 			[chardev "qemu_spicedir-chardev"]
@@ -159,10 +162,10 @@ func TestQemuConfigTemplates(t *testing.T) {
 			name = "org.spice-space.webdav.0"
 
 			[device "qemu_spicedir"]
+			bus = "dev-qemu_serial.0"
+			chardev = "qemu_spicedir-chardev"
 			driver = "virtserialport"
 			name = "org.spice-space.webdav.0"
-			chardev = "qemu_spicedir-chardev"
-			bus = "dev-qemu_serial.0"
 			`,
 		}}
 		for _, tc := range testCases {
@@ -177,19 +180,19 @@ func TestQemuConfigTemplates(t *testing.T) {
 		}{{
 			qemuPCIeOpts{"qemu_pcie0", 0, "1.0", true},
 			`[device "qemu_pcie0"]
-			driver = "pcie-root-port"
-			bus = "pcie.0"
 			addr = "1.0"
+			bus = "pcie.0"
 			chassis = "0"
+			driver = "pcie-root-port"
 			multifunction = "on"
 			`,
 		}, {
 			qemuPCIeOpts{"qemu_pcie2", 3, "2.0", false},
 			`[device "qemu_pcie2"]
-			driver = "pcie-root-port"
-			bus = "pcie.0"
 			addr = "2.0"
+			bus = "pcie.0"
 			chassis = "3"
+			driver = "pcie-root-port"
 			`,
 		}}
 		for _, tc := range testCases {
@@ -205,9 +208,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuDevOpts{"pci", "qemu_pcie1", "00.0", false},
 			`# SCSI controller
 			[device "qemu_scsi"]
-			driver = "virtio-scsi-pci"
-			bus = "qemu_pcie1"
 			addr = "00.0"
+			bus = "qemu_pcie1"
+			driver = "virtio-scsi-pci"
 			`,
 		}, {
 			qemuDevOpts{"ccw", "qemu_pcie2", "00.2", true},
@@ -230,9 +233,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuDevOpts{"pcie", "qemu_pcie0", "00.0", true},
 			`# Balloon driver
 			[device "qemu_balloon"]
-			driver = "virtio-balloon-pci"
-			bus = "qemu_pcie0"
 			addr = "00.0"
+			bus = "qemu_pcie0"
+			driver = "virtio-balloon-pci"
 			multifunction = "on"
 			`,
 		}, {
@@ -255,21 +258,21 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuDevOpts{"pci", "qemu_pcie0", "00.1", false},
 			`# Random number generator
 			[object "qemu_rng"]
-			qom-type = "rng-random"
 			filename = "/dev/urandom"
+			qom-type = "rng-random"
 
 			[device "dev-qemu_rng"]
-			driver = "virtio-rng-pci"
-			bus = "qemu_pcie0"
 			addr = "00.1"
+			bus = "qemu_pcie0"
+			driver = "virtio-rng-pci"
 			rng = "qemu_rng"
 			`,
 		}, {
 			qemuDevOpts{"ccw", "qemu_pcie0", "00.1", true},
 			`# Random number generator
 			[object "qemu_rng"]
-			qom-type = "rng-random"
 			filename = "/dev/urandom"
+			qom-type = "rng-random"
 
 			[device "dev-qemu_rng"]
 			driver = "virtio-rng-ccw"
@@ -290,11 +293,11 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuVsockOpts{qemuDevOpts{"pcie", "qemu_pcie0", "00.4", true}, 4, 14},
 			`# Vsock
 			[device "qemu_vsock"]
-			driver = "vhost-vsock-pci"
-			bus = "qemu_pcie0"
 			addr = "00.4"
-			multifunction = "on"
+			bus = "qemu_pcie0"
+			driver = "vhost-vsock-pci"
 			guest-cid = "14"
+			multifunction = "on"
 			vhostfd = "4"
 			`,
 		}, {
@@ -319,17 +322,17 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuGpuOpts{dev: qemuDevOpts{"pci", "qemu_pcie3", "00.0", true}, architecture: osarch.ARCH_64BIT_INTEL_X86},
 			`# GPU
 			[device "qemu_gpu"]
-			driver = "virtio-vga"
-			bus = "qemu_pcie3"
 			addr = "00.0"
+			bus = "qemu_pcie3"
+			driver = "virtio-vga"
 			multifunction = "on"`,
 		}, {
 			qemuGpuOpts{dev: qemuDevOpts{"pci", "qemu_pci3", "00.1", false}, architecture: osarch.ARCH_UNKNOWN},
 			`# GPU
 			[device "qemu_gpu"]
-			driver = "virtio-gpu-pci"
+			addr = "00.1"
 			bus = "qemu_pci3"
-			addr = "00.1"`,
+			driver = "virtio-gpu-pci"`,
 		}, {
 			qemuGpuOpts{dev: qemuDevOpts{"ccw", "devBus", "busAddr", true}, architecture: osarch.ARCH_UNKNOWN},
 			`# GPU
@@ -355,16 +358,16 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuDevOpts{"pci", "qemu_pcie3", "00.0", false},
 			`# Input
 			[device "qemu_keyboard"]
-			driver = "virtio-keyboard-pci"
+			addr = "00.0"
 			bus = "qemu_pcie3"
-			addr = "00.0"`,
+			driver = "virtio-keyboard-pci"`,
 		}, {
 			qemuDevOpts{"pcie", "qemu_pcie3", "00.0", true},
 			`# Input
 			[device "qemu_keyboard"]
-			driver = "virtio-keyboard-pci"
-			bus = "qemu_pcie3"
 			addr = "00.0"
+			bus = "qemu_pcie3"
+			driver = "virtio-keyboard-pci"
 			multifunction = "on"`,
 		}, {
 			qemuDevOpts{"ccw", "qemu_pcie3", "00.0", false},
@@ -391,9 +394,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			qemuDevOpts{"pci", "qemu_pcie0", "00.3", true},
 			`# Input
 			[device "qemu_tablet"]
-			driver = "virtio-tablet-pci"
-			bus = "qemu_pcie0"
 			addr = "00.3"
+			bus = "qemu_pcie0"
+			driver = "virtio-tablet-pci"
 			multifunction = "on"
 			`,
 		}, {
@@ -429,20 +432,20 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# CPU
 			[smp-opts]
+			cores = "4"
 			cpus = "8"
 			sockets = "1"
-			cores = "4"
 			threads = "2"
 
 			[object "mem0"]
 			qom-type = "memory-backend-memfd"
-			size = "7629M"
 			share = "on"
+			size = "7629M"
 
 			[numa]
-			type = "node"
+			memdev = "mem0"
 			nodeid = "0"
-			memdev = "mem0"`,
+			type = "node"`,
 		}, {
 			qemuCPUOpts{
 				architecture: "x86_64",
@@ -461,62 +464,62 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# CPU
 			[smp-opts]
+			cores = "2"
 			cpus = "2"
 			sockets = "1"
-			cores = "2"
 			threads = "1"
 
 			[object "mem0"]
-			qom-type = "memory-backend-file"
-			mem-path = "/hugepages/path"
-			prealloc = "on"
 			discard-data = "on"
-			size = "12000M"
-			policy = "bind"
-			share = "on"
 			host-nodes.0 = "8"
+			mem-path = "/hugepages/path"
+			policy = "bind"
+			prealloc = "on"
+			qom-type = "memory-backend-file"
+			share = "on"
+			size = "12000M"
 
 			[numa]
-			type = "node"
-			nodeid = "0"
 			memdev = "mem0"
+			nodeid = "0"
+			type = "node"
 
 			[object "mem1"]
-			qom-type = "memory-backend-file"
-			mem-path = "/hugepages/path"
-			prealloc = "on"
 			discard-data = "on"
-			size = "12000M"
-			policy = "bind"
-			share = "on"
 			host-nodes.0 = "9"
+			mem-path = "/hugepages/path"
+			policy = "bind"
+			prealloc = "on"
+			qom-type = "memory-backend-file"
+			share = "on"
+			size = "12000M"
 
 			[numa]
-			type = "node"
-			nodeid = "1"
 			memdev = "mem1"
+			nodeid = "1"
+			type = "node"
 
 			[object "mem2"]
-			qom-type = "memory-backend-file"
-			mem-path = "/hugepages/path"
-			prealloc = "on"
 			discard-data = "on"
-			size = "12000M"
-			policy = "bind"
-			share = "on"
 			host-nodes.0 = "10"
+			mem-path = "/hugepages/path"
+			policy = "bind"
+			prealloc = "on"
+			qom-type = "memory-backend-file"
+			share = "on"
+			size = "12000M"
 
 			[numa]
-			type = "node"
-			nodeid = "2"
 			memdev = "mem2"
+			nodeid = "2"
+			type = "node"
 
 			[numa]
-			type = "cpu"
+			core-id = "22"
 			node-id = "20"
 			socket-id = "21"
-			core-id = "22"
-			thread-id = "23"`,
+			thread-id = "23"
+			type = "cpu"`,
 		}, {
 			qemuCPUOpts{
 				architecture: "x86_64",
@@ -535,50 +538,50 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# CPU
 			[smp-opts]
+			cores = "2"
 			cpus = "2"
 			sockets = "1"
-			cores = "2"
 			threads = "1"
 
 			[object "mem0"]
+			host-nodes.0 = "8"
+			policy = "bind"
 			qom-type = "memory-backend-memfd"
 			size = "12000M"
-			policy = "bind"
-			host-nodes.0 = "8"
 
 			[numa]
-			type = "node"
-			nodeid = "0"
 			memdev = "mem0"
+			nodeid = "0"
+			type = "node"
 
 			[object "mem1"]
+			host-nodes.0 = "9"
+			policy = "bind"
 			qom-type = "memory-backend-memfd"
 			size = "12000M"
-			policy = "bind"
-			host-nodes.0 = "9"
 
 			[numa]
-			type = "node"
-			nodeid = "1"
 			memdev = "mem1"
+			nodeid = "1"
+			type = "node"
 
 			[object "mem2"]
+			host-nodes.0 = "10"
+			policy = "bind"
 			qom-type = "memory-backend-memfd"
 			size = "12000M"
-			policy = "bind"
-			host-nodes.0 = "10"
 
 			[numa]
-			type = "node"
-			nodeid = "2"
 			memdev = "mem2"
+			nodeid = "2"
+			type = "node"
 
 			[numa]
-			type = "cpu"
+			core-id = "22"
 			node-id = "20"
 			socket-id = "21"
-			core-id = "22"
-			thread-id = "23"`,
+			thread-id = "23"
+			type = "cpu"`,
 		}, {
 			qemuCPUOpts{
 				architecture: "x86_64",
@@ -598,57 +601,57 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# CPU
 			[smp-opts]
+			cores = "4"
 			cpus = "4"
 			sockets = "1"
-			cores = "4"
 			threads = "1"
 
 			[object "mem0"]
+			host-nodes = "8"
+			policy = "bind"
 			qom-type = "memory-backend-memfd"
 			size = "12000M"
-			policy = "bind"
-			host-nodes = "8"
 
 			[numa]
-			type = "node"
-			nodeid = "0"
 			memdev = "mem0"
+			nodeid = "0"
+			type = "node"
 
 			[object "mem1"]
+			host-nodes = "9"
+			policy = "bind"
 			qom-type = "memory-backend-memfd"
 			size = "12000M"
-			policy = "bind"
-			host-nodes = "9"
 
 			[numa]
-			type = "node"
-			nodeid = "1"
 			memdev = "mem1"
+			nodeid = "1"
+			type = "node"
 
 			[object "mem2"]
+			host-nodes = "10"
+			policy = "bind"
 			qom-type = "memory-backend-memfd"
 			size = "12000M"
-			policy = "bind"
-			host-nodes = "10"
 
 			[numa]
-			type = "node"
-			nodeid = "2"
 			memdev = "mem2"
+			nodeid = "2"
+			type = "node"
 
 			[numa]
-			type = "cpu"
+			core-id = "13"
 			node-id = "11"
 			socket-id = "12"
-			core-id = "13"
 			thread-id = "14"
+			type = "cpu"
 
 			[numa]
-			type = "cpu"
+			core-id = "22"
 			node-id = "20"
 			socket-id = "21"
-			core-id = "22"
-			thread-id = "23"`,
+			thread-id = "23"
+			type = "cpu"`,
 		}, {
 			qemuCPUOpts{
 				architecture: "arm64",
@@ -668,9 +671,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# CPU
 			[smp-opts]
+			cores = "4"
 			cpus = "4"
 			sockets = "1"
-			cores = "4"
 			threads = "1"`,
 		}}
 		for _, tc := range testCases {
@@ -723,16 +726,16 @@ func TestQemuConfigTemplates(t *testing.T) {
 			`# Firmware (read only)
 			[drive]
 			file = "/tmp/ovmf.fd"
-			if = "pflash"
 			format = "raw"
-			unit = "0"
+			if = "pflash"
 			readonly = "on"
+			unit = "0"
 
 			# Firmware settings (writable)
 			[drive]
 			file = "/tmp/settings.fd"
-			if = "pflash"
 			format = "raw"
+			if = "pflash"
 			unit = "1"`,
 		}}
 		for _, tc := range testCases {
@@ -754,16 +757,16 @@ func TestQemuConfigTemplates(t *testing.T) {
 			`# Shared config drive (9p)
 			[fsdev "qemu_config"]
 			fsdriver = "local"
-			security_model = "none"
-			readonly = "on"
 			path = "/var/9p"
+			readonly = "on"
+			security_model = "none"
 
 			[device "dev-qemu_config-drive-9p"]
-			driver = "virtio-9p-pci"
-			bus = "qemu_pcie0"
 			addr = "00.5"
-			mount_tag = "config"
-			fsdev = "qemu_config"`,
+			bus = "qemu_pcie0"
+			driver = "virtio-9p-pci"
+			fsdev = "qemu_config"
+			mount_tag = "config"`,
 		}, {
 			qemuDriveConfigOpts{
 				name:     "config",
@@ -777,12 +780,12 @@ func TestQemuConfigTemplates(t *testing.T) {
 			path = "/dev/virtio-fs"
 
 			[device "dev-qemu_config-drive-virtio-fs"]
-			driver = "vhost-user-fs-pci"
-			bus = "qemu_pcie1"
 			addr = "10.2"
+			bus = "qemu_pcie1"
+			chardev = "qemu_config"
+			driver = "vhost-user-fs-pci"
 			multifunction = "on"
-			tag = "config"
-			chardev = "qemu_config"`,
+			tag = "config"`,
 		}, {
 			qemuDriveConfigOpts{
 				name:     "config",
@@ -796,9 +799,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			path = "/var/virtio-fs"
 
 			[device "dev-qemu_config-drive-virtio-fs"]
+			chardev = "qemu_config"
 			driver = "vhost-user-fs-ccw"
-			tag = "config"
-			chardev = "qemu_config"`,
+			tag = "config"`,
 		}, {
 			qemuDriveConfigOpts{
 				name:     "config",
@@ -809,15 +812,15 @@ func TestQemuConfigTemplates(t *testing.T) {
 			`# Shared config drive (9p)
 			[fsdev "qemu_config"]
 			fsdriver = "local"
-			security_model = "none"
-			readonly = "on"
 			path = "/dev/9p"
+			readonly = "on"
+			security_model = "none"
 
 			[device "dev-qemu_config-drive-9p"]
 			driver = "virtio-9p-ccw"
-			multifunction = "on"
+			fsdev = "qemu_config"
 			mount_tag = "config"
-			fsdev = "qemu_config"`,
+			multifunction = "on"`,
 		}, {
 			qemuDriveConfigOpts{
 				dev:      qemuDevOpts{"ccw", "qemu_pcie0", "00.0", true},
@@ -847,17 +850,17 @@ func TestQemuConfigTemplates(t *testing.T) {
 			`# stub drive (9p)
 			[fsdev "incus_stub"]
 			fsdriver = "local"
-			security_model = "passthrough"
-			readonly = "off"
 			path = "/var/9p"
+			readonly = "off"
+			security_model = "passthrough"
 
 			[device "dev-incus_stub-9p"]
-			driver = "virtio-9p-pci"
-			bus = "qemu_pcie0"
 			addr = "00.5"
-			multifunction = "on"
+			bus = "qemu_pcie0"
+			driver = "virtio-9p-pci"
+			fsdev = "incus_stub"
 			mount_tag = "mtag"
-			fsdev = "incus_stub"`,
+			multifunction = "on"`,
 		}, {
 			qemuDriveDirOpts{
 				dev:      qemuDevOpts{"pcie", "qemu_pcie1", "10.2", false},
@@ -872,11 +875,11 @@ func TestQemuConfigTemplates(t *testing.T) {
 			path = "/dev/virtio"
 
 			[device "dev-incus_vfs-virtio-fs"]
-			driver = "vhost-user-fs-pci"
-			bus = "qemu_pcie1"
 			addr = "10.2"
-			tag = "vtag"
-			chardev = "incus_vfs"`,
+			bus = "qemu_pcie1"
+			chardev = "incus_vfs"
+			driver = "vhost-user-fs-pci"
+			tag = "vtag"`,
 		}, {
 			qemuDriveDirOpts{
 				dev:      qemuDevOpts{"ccw", "qemu_pcie0", "00.0", true},
@@ -891,10 +894,10 @@ func TestQemuConfigTemplates(t *testing.T) {
 			path = "/dev/vio"
 
 			[device "dev-incus_vfs-virtio-fs"]
+			chardev = "incus_vfs"
 			driver = "vhost-user-fs-ccw"
 			multifunction = "on"
-			tag = "vtag"
-			chardev = "incus_vfs"`,
+			tag = "vtag"`,
 		}, {
 			qemuDriveDirOpts{
 				dev:      qemuDevOpts{"ccw", "qemu_pcie0", "00.0", false},
@@ -907,14 +910,14 @@ func TestQemuConfigTemplates(t *testing.T) {
 			`# stub2 drive (9p)
 			[fsdev "incus_stub2"]
 			fsdriver = "local"
-			security_model = "passthrough"
-			readonly = "on"
 			path = "/var/9p"
+			readonly = "on"
+			security_model = "passthrough"
 
 			[device "dev-incus_stub2-9p"]
 			driver = "virtio-9p-ccw"
-			mount_tag = "mtag2"
-			fsdev = "incus_stub2"`,
+			fsdev = "incus_stub2"
+			mount_tag = "mtag2"`,
 		}, {
 			qemuDriveDirOpts{
 				dev:      qemuDevOpts{"ccw", "qemu_pcie0", "00.0", true},
@@ -940,9 +943,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# PCI card ("physical-pci-name" device)
 			[device "dev-incus_physical-pci-name"]
-			driver = "vfio-pci"
-			bus = "qemu_pcie1"
 			addr = "00.0"
+			bus = "qemu_pcie1"
+			driver = "vfio-pci"
 			host = "host-slot"`,
 		}, {
 			qemuPCIPhysicalOpts{
@@ -953,8 +956,8 @@ func TestQemuConfigTemplates(t *testing.T) {
 			`# PCI card ("physical-ccw-name" device)
 			[device "dev-incus_physical-ccw-name"]
 			driver = "vfio-ccw"
-			multifunction = "on"
-			host = "host-slot-ccw"`,
+			host = "host-slot-ccw"
+			multifunction = "on"`,
 		}}
 		for _, tc := range testCases {
 			runTest(tc.expected, qemuPCIPhysical(&tc.opts))
@@ -973,9 +976,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# GPU card ("gpu-name" device)
 			[device "dev-incus_gpu-name"]
-			driver = "vfio-pci"
-			bus = "qemu_pcie1"
 			addr = "00.0"
+			bus = "qemu_pcie1"
+			driver = "vfio-pci"
 			host = "gpu-slot"`,
 		}, {
 			qemuGPUDevPhysicalOpts{
@@ -987,8 +990,8 @@ func TestQemuConfigTemplates(t *testing.T) {
 			`# GPU card ("gpu-name" device)
 			[device "dev-incus_gpu-name"]
 			driver = "vfio-ccw"
-			multifunction = "on"
 			host = "gpu-slot"
+			multifunction = "on"
 			x-vga = "on"`,
 		}, {
 			qemuGPUDevPhysicalOpts{
@@ -998,9 +1001,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# GPU card ("vgpu-name" device)
 			[device "dev-incus_vgpu-name"]
-			driver = "vfio-pci"
-			bus = "qemu_pcie1"
 			addr = "00.0"
+			bus = "qemu_pcie1"
+			driver = "vfio-pci"
 			multifunction = "on"
 			sysfsdev = "/sys/bus/mdev/devices/vgpu-dev"`,
 		}}
@@ -1022,9 +1025,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 			},
 			`# USB controller
 			[device "qemu_usb"]
-			driver = "qemu-xhci"
-			bus = "qemu_pcie1"
 			addr = "00.0"
+			bus = "qemu_pcie1"
+			driver = "qemu-xhci"
 			multifunction = "on"
 			p2 = "3"
 			p3 = "3"
@@ -1034,24 +1037,24 @@ func TestQemuConfigTemplates(t *testing.T) {
 			name = "usbredir"
 
 			[device "qemu_spice-usb1"]
-			driver = "usb-redir"
 			chardev = "qemu_spice-usb-chardev1"
+			driver = "usb-redir"
 
 			[chardev "qemu_spice-usb-chardev2"]
 			backend = "spicevmc"
 			name = "usbredir"
 
 			[device "qemu_spice-usb2"]
-			driver = "usb-redir"
 			chardev = "qemu_spice-usb-chardev2"
+			driver = "usb-redir"
 
 			[chardev "qemu_spice-usb-chardev3"]
 			backend = "spicevmc"
 			name = "usbredir"
 
 			[device "qemu_spice-usb3"]
-			driver = "usb-redir"
-			chardev = "qemu_spice-usb-chardev3"`,
+			chardev = "qemu_spice-usb-chardev3"
+			driver = "usb-redir"`,
 		}}
 		for _, tc := range testCases {
 			runTest(tc.expected, qemuUSB(&tc.opts))
@@ -1072,8 +1075,8 @@ func TestQemuConfigTemplates(t *testing.T) {
 			path = "/dev/my/tpm"
 
 			[tpmdev "qemu_tpm-tpmdev_myTpm"]
-			type = "emulator"
 			chardev = "qemu_tpm-chardev_myTpm"
+			type = "emulator"
 
 			[device "dev-incus_myTpm"]
 			driver = "tpm-crb"
@@ -1087,79 +1090,48 @@ func TestQemuConfigTemplates(t *testing.T) {
 	t.Run("qemu_raw_cfg_override", func(t *testing.T) {
 		conf := []cfg.Section{{
 			Name: "global",
-			Entries: []cfg.Entry{
-				{Key: "driver", Value: "ICH9-LPC"},
-				{Key: "property", Value: "disable_s3"},
-				{Key: "value", Value: "1"},
+			Entries: map[string]string{
+				"driver":   "ICH9-LPC",
+				"property": "disable_s3",
+				"value":    "1",
 			},
 		}, {
 			Name: "global",
-			Entries: []cfg.Entry{
-				{Key: "driver", Value: "ICH9-LPC"},
-				{Key: "property", Value: "disable_s4"},
-				{Key: "value", Value: "0"},
+			Entries: map[string]string{
+				"driver":   "ICH9-LPC",
+				"property": "disable_s4",
+				"value":    "0",
 			},
 		}, {
-			Name: "memory",
-			Entries: []cfg.Entry{
-				{Key: "size", Value: "1024M"},
-			},
+			Name:    "memory",
+			Entries: map[string]string{"size": "1024M"},
 		}, {
 			Name: `device "qemu_gpu"`,
-			Entries: []cfg.Entry{
-				{Key: "driver", Value: "virtio-gpu-pci"},
-				{Key: "bus", Value: "qemu_pci3"},
-				{Key: "addr", Value: "00.0"},
+			Entries: map[string]string{
+				"driver": "virtio-gpu-pci",
+				"bus":    "qemu_pci3",
+				"addr":   "00.0",
 			},
 		}, {
 			Name: `device "qemu_keyboard"`,
-			Entries: []cfg.Entry{
-				{Key: "driver", Value: "virtio-keyboard-pci"},
-				{Key: "bus", Value: "qemu_pci2"},
-				{Key: "addr", Value: "00.1"},
+			Entries: map[string]string{
+				"driver": "virtio-keyboard-pci",
+				"bus":    "qemu_pci2",
+				"addr":   "00.1",
 			},
 		}}
 		testCases := []struct {
 			cfg       []cfg.Section
-			overrides map[string]string
+			overrides string
 			expected  string
 		}{{
-			// unmodified
-			conf,
-			map[string]string{},
-			`[global]
-			driver = "ICH9-LPC"
-			property = "disable_s3"
-			value = "1"
-
-			[global]
-			driver = "ICH9-LPC"
-			property = "disable_s4"
-			value = "0"
-
-			[memory]
-			size = "1024M"
-
-			[device "qemu_gpu"]
-			driver = "virtio-gpu-pci"
-			bus = "qemu_pci3"
-			addr = "00.0"
-
-			[device "qemu_keyboard"]
-			driver = "virtio-keyboard-pci"
-			bus = "qemu_pci2"
-			addr = "00.1"`,
-		}, {
 			// override some keys
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[memory]
-						size = "4096M"
+			`[memory]
+			size = "4096M"
 
-						[device "qemu_gpu"]
-						driver = "qxl-vga"`,
-			},
+			[device "qemu_gpu"]
+			driver = "qxl-vga"`,
 			`[global]
 			driver = "ICH9-LPC"
 			property = "disable_s3"
@@ -1174,25 +1146,22 @@ func TestQemuConfigTemplates(t *testing.T) {
 			size = "4096M"
 
 			[device "qemu_gpu"]
-			driver = "qxl-vga"
-			bus = "qemu_pci3"
 			addr = "00.0"
+			bus = "qemu_pci3"
+			driver = "qxl-vga"
 
 			[device "qemu_keyboard"]
-			driver = "virtio-keyboard-pci"
+			addr = "00.1"
 			bus = "qemu_pci2"
-			addr = "00.1"`,
+			driver = "virtio-keyboard-pci"`,
 		}, {
 			// delete some keys
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[device "qemu_keyboard"]
-						driver = ""
+			`[device "qemu_keyboard"]
+			driver = ""
 
-						[device "qemu_gpu"]
-						addr = ""`,
-			},
+			[device "qemu_gpu"]
+			addr = ""`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s3"
@@ -1207,29 +1176,26 @@ func TestQemuConfigTemplates(t *testing.T) {
 				size = "1024M"
 
 				[device "qemu_gpu"]
-				driver = "virtio-gpu-pci"
 				bus = "qemu_pci3"
+				driver = "virtio-gpu-pci"
 
 				[device "qemu_keyboard"]
-				bus = "qemu_pci2"
-				addr = "00.1"`,
+				addr = "00.1"
+				bus = "qemu_pci2"`,
 		}, {
 			// add some keys to existing sections
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[memory]
-						somekey = "somevalue"
-						somekey2 =             "somevalue2"
-						somekey3 =   "somevalue3"
-						somekey4="somevalue4"
+			`[memory]
+			somekey = "somevalue"
+			somekey2 =             "somevalue2"
+			somekey3 =   "somevalue3"
+			somekey4="somevalue4"
 
-						[device "qemu_keyboard"]
-						multifunction="off"
+			[device "qemu_keyboard"]
+			multifunction="off"
 
-						[device "qemu_gpu"]
-						multifunction=      "on"`,
-			},
+			[device "qemu_gpu"]
+			multifunction=      "on"`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s3"
@@ -1248,29 +1214,26 @@ func TestQemuConfigTemplates(t *testing.T) {
 				somekey4 = "somevalue4"
 
 				[device "qemu_gpu"]
-				driver = "virtio-gpu-pci"
-				bus = "qemu_pci3"
 				addr = "00.0"
+				bus = "qemu_pci3"
+				driver = "virtio-gpu-pci"
 				multifunction = "on"
 
 				[device "qemu_keyboard"]
-				driver = "virtio-keyboard-pci"
-				bus = "qemu_pci2"
 				addr = "00.1"
+				bus = "qemu_pci2"
+				driver = "virtio-keyboard-pci"
 				multifunction = "off"`,
 		}, {
 			// edit/add/remove
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[memory]
-						size = "2048M"
-						[device "qemu_gpu"]
-						multifunction = "on"
-						[device "qemu_keyboard"]
-						addr = ""
-						bus = ""`,
-			},
+			`[memory]
+			size = "2048M"
+			[device "qemu_gpu"]
+			multifunction = "on"
+			[device "qemu_keyboard"]
+			addr = ""
+			bus = ""`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s3"
@@ -1285,9 +1248,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 				size = "2048M"
 
 				[device "qemu_gpu"]
-				driver = "virtio-gpu-pci"
-				bus = "qemu_pci3"
 				addr = "00.0"
+				bus = "qemu_pci3"
+				driver = "virtio-gpu-pci"
 				multifunction = "on"
 
 				[device "qemu_keyboard"]
@@ -1295,41 +1258,35 @@ func TestQemuConfigTemplates(t *testing.T) {
 		}, {
 			// delete sections
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[memory]
-						[device "qemu_keyboard"]
-						[global][1]`,
-			},
+			`[memory]
+			[device "qemu_keyboard"]
+			[global][1]`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s3"
 				value = "1"
 
 				[device "qemu_gpu"]
-				driver = "virtio-gpu-pci"
+				addr = "00.0"
 				bus = "qemu_pci3"
-				addr = "00.0"`,
+				driver = "virtio-gpu-pci"`,
 		}, {
 			// add sections
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[object1]
-						key1     = "value1"
-						key2     = "value2"
+			`[object1]
+			key1     = "value1"
+			key2     = "value2"
 
-						[object "2"]
-						key3  = "value3"
-						[object "3"]
-						key4  = "value4"
+			[object "2"]
+			key3  = "value3"
+			[object "3"]
+			key4  = "value4"
 
-						[object "2"]
-						key5  = "value5"
+			[object "2"]
+			key5  = "value5"
 
-						[object1]
-						key6     = "value6"`,
-			},
+			[object1]
+			key6     = "value6"`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s3"
@@ -1344,39 +1301,36 @@ func TestQemuConfigTemplates(t *testing.T) {
 				size = "1024M"
 
 				[device "qemu_gpu"]
-				driver = "virtio-gpu-pci"
-				bus = "qemu_pci3"
 				addr = "00.0"
+				bus = "qemu_pci3"
+				driver = "virtio-gpu-pci"
 
 				[device "qemu_keyboard"]
-				driver = "virtio-keyboard-pci"
-				bus = "qemu_pci2"
 				addr = "00.1"
+				bus = "qemu_pci2"
+				driver = "virtio-keyboard-pci"
+
+				[object1]
+				key1 = "value1"
+				key2 = "value2"
+				key6 = "value6"
 
 				[object "2"]
 				key3 = "value3"
 				key5 = "value5"
 
 				[object "3"]
-				key4 = "value4"
-
-				[object1]
-				key1 = "value1"
-				key2 = "value2"
-				key6 = "value6"`,
+				key4 = "value4"`,
 		}, {
 			// add/remove sections
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[device "qemu_gpu"]
-						[object "2"]
-						key3  = "value3"
-						[object "3"]
-						key4  = "value4"
-						[object "2"]
-						key5  = "value5"`,
-			},
+			`[device "qemu_gpu"]
+			[object "2"]
+			key3  = "value3"
+			[object "3"]
+			key4  = "value4"
+			[object "2"]
+			key5  = "value5"`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s3"
@@ -1391,9 +1345,9 @@ func TestQemuConfigTemplates(t *testing.T) {
 				size = "1024M"
 
 				[device "qemu_keyboard"]
-				driver = "virtio-keyboard-pci"
-				bus = "qemu_pci2"
 				addr = "00.1"
+				bus = "qemu_pci2"
+				driver = "virtio-keyboard-pci"
 
 				[object "2"]
 				key3 = "value3"
@@ -1404,64 +1358,58 @@ func TestQemuConfigTemplates(t *testing.T) {
 		}, {
 			// edit keys of repeated sections
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[global][1]
-						property ="disable_s1"
-						[global]
-						property ="disable_s5"
-						[global][1]
-						value = ""
-						[global][0]
-						somekey ="somevalue"
-						[global][1]
-						anotherkey = "anothervalue"`,
-			},
+			`[global][1]
+			property ="disable_s1"
+			[global]
+			property ="disable_s5"
+			[global][1]
+			value = ""
+			[global][0]
+			somekey ="somevalue"
+			[global][1]
+			anotherkey = "anothervalue"`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s5"
-				value = "1"
 				somekey = "somevalue"
+				value = "1"
 
 				[global]
+				anotherkey = "anothervalue"
 				driver = "ICH9-LPC"
 				property = "disable_s1"
-				anotherkey = "anothervalue"
 
 				[memory]
 				size = "1024M"
 
 				[device "qemu_gpu"]
-				driver = "virtio-gpu-pci"
-				bus = "qemu_pci3"
 				addr = "00.0"
+				bus = "qemu_pci3"
+				driver = "virtio-gpu-pci"
 
 				[device "qemu_keyboard"]
-				driver = "virtio-keyboard-pci"
+				addr = "00.1"
 				bus = "qemu_pci2"
-				addr = "00.1"`,
+				driver = "virtio-keyboard-pci"`,
 		}, {
 			// create multiple sections with same name
 			conf,
 			// note that for appending new sections, all that matters is that
 			// the index is higher than the existing indexes
-			map[string]string{
-				"raw.qemu.conf": `
-						[global][2]
-						property =  "new section"
-						[global][2]
-						value =     "new value"
-						[object][3]
-						k1 =        "v1"
-						[object][3]
-						k2 =        "v2"
-						[object][4]
-						k3 =        "v1"
-						[object][4]
-						k2 =        "v2"
-						[object][11]
-						k11 =  "v11"`,
-			},
+			`[global][2]
+			property =  "new section"
+			[global][2]
+			value =     "new value"
+			[object][3]
+			k1 =        "v1"
+			[object][3]
+			k2 =        "v2"
+			[object][4]
+			k3 =        "v1"
+			[object][4]
+			k2 =        "v2"
+			[object][11]
+			k11 =  "v11"`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s3"
@@ -1476,14 +1424,14 @@ func TestQemuConfigTemplates(t *testing.T) {
 				size = "1024M"
 
 				[device "qemu_gpu"]
-				driver = "virtio-gpu-pci"
-				bus = "qemu_pci3"
 				addr = "00.0"
+				bus = "qemu_pci3"
+				driver = "virtio-gpu-pci"
 
 				[device "qemu_keyboard"]
-				driver = "virtio-keyboard-pci"
-				bus = "qemu_pci2"
 				addr = "00.1"
+				bus = "qemu_pci2"
+				driver = "virtio-keyboard-pci"
 
 				[global]
 				property = "new section"
@@ -1500,23 +1448,61 @@ func TestQemuConfigTemplates(t *testing.T) {
 				[object]
 				k11 = "v11"`,
 		}, {
+			// create multiple sections with same name, with decreasing indices
+			conf,
+			`[object][3]
+			k1 =        "v1"
+			[object][3]
+			k2 =        "v2"
+			[object][2]
+			k3 =        "v1"
+			[object][2]
+			k2 =        "v2"`,
+			`[global]
+				driver = "ICH9-LPC"
+				property = "disable_s3"
+				value = "1"
+
+				[global]
+				driver = "ICH9-LPC"
+				property = "disable_s4"
+				value = "0"
+
+				[memory]
+				size = "1024M"
+
+				[device "qemu_gpu"]
+				addr = "00.0"
+				bus = "qemu_pci3"
+				driver = "virtio-gpu-pci"
+
+				[device "qemu_keyboard"]
+				addr = "00.1"
+				bus = "qemu_pci2"
+				driver = "virtio-keyboard-pci"
+
+				[object]
+				k1 = "v1"
+				k2 = "v2"
+
+				[object]
+				k2 = "v2"
+				k3 = "v1"`,
+		}, {
 			// mix all operations
 			conf,
-			map[string]string{
-				"raw.qemu.conf": `
-						[memory]
-						size = "8192M"
-						[device "qemu_keyboard"]
-						multifunction=on
-						bus =
-						[device "qemu_gpu"]
-						[object "3"]
-						key4 = " value4 "
-						[object "2"]
-						key3 =   value3
-						[object "3"]
-						key5 = "value5"`,
-			},
+			`[memory]
+			size = "8192M"
+			[device "qemu_keyboard"]
+			multifunction=on
+			bus =
+			[device "qemu_gpu"]
+			[object "3"]
+			key4 = " value4 "
+			[object "2"]
+			key3 =   value3
+			[object "3"]
+			key5 = "value5"`,
 			`[global]
 				driver = "ICH9-LPC"
 				property = "disable_s3"
@@ -1531,56 +1517,24 @@ func TestQemuConfigTemplates(t *testing.T) {
 				size = "8192M"
 
 				[device "qemu_keyboard"]
-				driver = "virtio-keyboard-pci"
 				addr = "00.1"
+				driver = "virtio-keyboard-pci"
 				multifunction = "on"
-
-				[object "2"]
-				key3 = "value3"
 
 				[object "3"]
 				key4 = " value4 "
-				key5 = "value5"`,
+				key5 = "value5"
+
+				[object "2"]
+				key3 = "value3"`,
 		}}
 		for _, tc := range testCases {
-			runTest(tc.expected, qemuRawCfgOverride(tc.cfg, tc.overrides))
-		}
-	})
+			overridden, err := qemuRawCfgOverride(tc.cfg, tc.overrides)
+			if err != nil {
+				t.Error(err)
+			}
 
-	t.Run("parse_conf_override", func(t *testing.T) {
-		input := `
-		[global]
-		key1 = "val1"
-		key3 = "val3"
-
-		[global][0]
-		key2 = "val2"
-
-		[global][1]
-		key1 = "val3"
-
-		[global][4]
-		key2 = "val4"
-
-		[global]
-
-		[global][4]
-		[global][5]
-		`
-		expected := configMap{
-			{"global", 0, "key1"}: "val1",
-			{"global", 0, "key3"}: "val3",
-			{"global", 0, "key2"}: "val2",
-			{"global", 1, "key1"}: "val3",
-			{"global", 4, "key2"}: "val4",
-			{"global", 0, ""}:     "",
-			{"global", 4, ""}:     "",
-			{"global", 5, ""}:     "",
-		}
-
-		actual := parseConfOverride(input)
-		if !reflect.DeepEqual(expected, actual) {
-			t.Errorf("Expected: %v. Got: %v", expected, actual)
+			runTest(tc.expected, overridden)
 		}
 	})
 }

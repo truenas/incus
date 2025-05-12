@@ -5,6 +5,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -59,7 +60,7 @@ SELECT instances.name FROM instances
 // instance with the given name in the given project.
 //
 // It returns the empty string if the container is hosted on this node.
-func (c *ClusterTx) GetNodeAddressOfInstance(ctx context.Context, project string, name string, instType instancetype.Type) (string, error) {
+func (c *ClusterTx) GetNodeAddressOfInstance(ctx context.Context, project string, name string) (string, error) {
 	var stmt string
 
 	args := make([]any, 0, 4) // Expect up to 4 filters.
@@ -70,11 +71,6 @@ func (c *ClusterTx) GetNodeAddressOfInstance(ctx context.Context, project string
 	args = append(args, project)
 
 	// Instance type filter.
-	if instType != instancetype.Any {
-		filters.WriteString(" AND instances.type = ?")
-		args = append(args, instType)
-	}
-
 	if strings.Contains(name, internalInstance.SnapshotDelimiter) {
 		parts := strings.SplitN(name, internalInstance.SnapshotDelimiter, 2)
 
@@ -154,7 +150,7 @@ type Instance struct {
 // GetInstancesByMemberAddress returns the instances associated to each cluster member address.
 // The member address of instances running on the local member is set to the empty string, to distinguish it from
 // remote nodes. Instances whose member is down are added to the special address "0.0.0.0".
-func (c *ClusterTx) GetInstancesByMemberAddress(ctx context.Context, offlineThreshold time.Duration, projects []string, instType instancetype.Type) (map[string][]Instance, error) {
+func (c *ClusterTx) GetInstancesByMemberAddress(ctx context.Context, offlineThreshold time.Duration, projects []string) (map[string][]Instance, error) {
 	args := make([]any, 0, 2) // Expect up to 2 filters.
 	var q strings.Builder
 
@@ -171,12 +167,6 @@ func (c *ClusterTx) GetInstancesByMemberAddress(ctx context.Context, offlineThre
 	q.WriteString(fmt.Sprintf("WHERE projects.name IN %s", query.Params(len(projects))))
 	for _, project := range projects {
 		args = append(args, project)
-	}
-
-	// Instance type filter.
-	if instType != instancetype.Any {
-		q.WriteString(" AND instances.type = ?")
-		args = append(args, instType)
 	}
 
 	q.WriteString(" ORDER BY instances.id")
@@ -846,7 +836,7 @@ SELECT instances.id, projects.name AS project, instances.name, nodes.name AS nod
 
 	err := c.tx.QueryRowContext(ctx, q, inargs...).Scan(&inst.ID, &inst.Project, &inst.Name, &inst.Node, &inst.Type, &inst.Architecture, &inst.Ephemeral, &inst.CreationDate, &inst.Stateful, &inst.LastUseDate, &inst.Description, &inst.ExpiryDate)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, api.StatusErrorf(http.StatusNotFound, "Instance not found")
 		}
 
@@ -887,7 +877,7 @@ SELECT storage_pools.name FROM storage_pools
 
 	err := c.tx.QueryRowContext(ctx, query, inargs...).Scan(outargs...)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", api.StatusErrorf(http.StatusNotFound, "Instance storage pool not found")
 		}
 
@@ -919,7 +909,7 @@ SELECT projects.name, instances.name
 WHERE instances.id=?
 `
 	err := c.tx.QueryRowContext(ctx, q, id).Scan(&project, &name)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", api.StatusErrorf(http.StatusNotFound, "Instance not found")
 	}
 
@@ -940,7 +930,7 @@ func (c *ClusterTx) GetInstanceConfig(ctx context.Context, id int, key string) (
 	value := ""
 
 	err := c.tx.QueryRowContext(ctx, q, id, key).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", api.StatusErrorf(http.StatusNotFound, "Instance config not found")
 	}
 

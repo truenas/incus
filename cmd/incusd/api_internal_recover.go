@@ -119,8 +119,8 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 
 	res := internalRecover.ValidateResult{}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// addDependencyError adds an error to the list of dependency errors if not already present in list.
 	addDependencyError := func(err error) {
@@ -196,7 +196,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 				}
 			}()
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				cleanupPool := pools[pool.Name()]
 				_, _ = cleanupPool.Unmount() // Defer won't do it if record exists, so unmount on failure.
 			})
@@ -358,7 +358,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 				}
 			}
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				_ = dbStoragePoolDeleteAndUpdateCache(context.Background(), s, pool.Name())
 			})
 
@@ -410,7 +410,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 					return response.SmartError(fmt.Errorf("Failed importing custom volume %q in project %q: %w", poolVol.Volume.Name, projectName, err))
 				}
 
-				revert.Add(cleanup)
+				reverter.Add(cleanup)
 			}
 
 			// Recover unknown buckets.
@@ -426,7 +426,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 					return response.SmartError(fmt.Errorf("Failed importing bucket %q in project %q: %w", poolVol.Bucket.Name, projectName, err))
 				}
 
-				revert.Add(cleanup)
+				reverter.Add(cleanup)
 			}
 		}
 	}
@@ -464,7 +464,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 					return response.SmartError(fmt.Errorf("Failed creating instance %q record in project %q: %w", poolVol.Container.Name, projectName, err))
 				}
 
-				revert.Add(cleanup)
+				reverter.Add(cleanup)
 
 				// Recover instance volume snapshots.
 				for _, poolInstSnap := range poolVol.Snapshots {
@@ -482,7 +482,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 						return response.SmartError(fmt.Errorf("Failed creating instance %q snapshot %q record in project %q: %w", poolVol.Container.Name, poolInstSnap.Name, projectName, err))
 					}
 
-					revert.Add(cleanup)
+					reverter.Add(cleanup)
 				}
 
 				// Recreate instance mount path and symlinks (must come after snapshot recovery).
@@ -491,7 +491,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 					return response.SmartError(fmt.Errorf("Failed importing instance %q in project %q: %w", poolVol.Container.Name, projectName, err))
 				}
 
-				revert.Add(cleanup)
+				reverter.Add(cleanup)
 
 				// Reinitialize the instance's root disk quota even if no size specified (allows the storage driver the
 				// opportunity to reinitialize the quota based on the new storage volume's DB ID).
@@ -506,7 +506,7 @@ func internalRecoverScan(ctx context.Context, s *state.State, userPools []api.St
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
 	return response.EmptySyncResponse
 }
 
@@ -519,11 +519,11 @@ func internalRecoverImportInstance(s *state.State, pool storagePools.Pool, proje
 
 	// Add root device if needed.
 	if poolVol.Container.Devices == nil {
-		poolVol.Container.Devices = make(map[string]map[string]string, 0)
+		poolVol.Container.Devices = make(map[string]map[string]string)
 	}
 
 	if poolVol.Container.ExpandedDevices == nil {
-		poolVol.Container.ExpandedDevices = make(map[string]map[string]string, 0)
+		poolVol.Container.ExpandedDevices = make(map[string]map[string]string)
 	}
 
 	internalImportRootDevicePopulate(pool.Name(), poolVol.Container.Devices, poolVol.Container.ExpandedDevices, profiles)
@@ -555,11 +555,11 @@ func internalRecoverImportInstanceSnapshot(s *state.State, pool storagePools.Poo
 
 	// Add root device if needed.
 	if snap.Devices == nil {
-		snap.Devices = make(map[string]map[string]string, 0)
+		snap.Devices = make(map[string]map[string]string)
 	}
 
 	if snap.ExpandedDevices == nil {
-		snap.ExpandedDevices = make(map[string]map[string]string, 0)
+		snap.ExpandedDevices = make(map[string]map[string]string)
 	}
 
 	internalImportRootDevicePopulate(pool.Name(), snap.Devices, snap.ExpandedDevices, profiles)

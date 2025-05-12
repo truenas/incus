@@ -29,6 +29,7 @@ import (
 	firewallDrivers "github.com/lxc/incus/v6/internal/server/firewall/drivers"
 	"github.com/lxc/incus/v6/internal/server/ip"
 	"github.com/lxc/incus/v6/internal/server/network/acl"
+	addressset "github.com/lxc/incus/v6/internal/server/network/address-set"
 	"github.com/lxc/incus/v6/internal/server/project"
 	localUtil "github.com/lxc/incus/v6/internal/server/util"
 	"github.com/lxc/incus/v6/internal/server/warnings"
@@ -160,14 +161,67 @@ func (n *bridge) ValidateName(name string) error {
 func (n *bridge) Validate(config map[string]string) error {
 	// Build driver specific rules dynamically.
 	rules := map[string]func(value string) error{
+		// gendoc:generate(entity=network_bridge, group=common, key=bgp.ipv4.nexthop)
+		//
+		// ---
+		//  type: string
+		//  condition: BGP server
+		//  default: local address
+		//  shortdesc: Override the next-hop for advertised prefixes
 		"bgp.ipv4.nexthop": validate.Optional(validate.IsNetworkAddressV4),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=bgp.ipv6.nexthop)
+		//
+		// ---
+		//  type: string
+		//  condition: BGP server
+		//  default: local address
+		//  shortdesc: Override the next-hop for advertised prefixes
 		"bgp.ipv6.nexthop": validate.Optional(validate.IsNetworkAddressV6),
 
-		"bridge.driver":              validate.Optional(validate.IsOneOf("native", "openvswitch")),
-		"bridge.external_interfaces": validate.Optional(validateExternalInterfaces),
-		"bridge.hwaddr":              validate.Optional(validate.IsNetworkMAC),
-		"bridge.mtu":                 validate.Optional(validate.IsNetworkMTU),
+		// gendoc:generate(entity=network_bridge, group=common, key=bridge.driver)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: `native`
+		//  shortdesc: Bridge driver: `native` or `openvswitch`
+		"bridge.driver": validate.Optional(validate.IsOneOf("native", "openvswitch")),
 
+		// gendoc:generate(entity=network_bridge, group=common, key=bridge.external_interfaces)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: -
+		//  shortdesc: Comma-separated list of unconfigured network interfaces to include in the bridge
+		"bridge.external_interfaces": validate.Optional(validateExternalInterfaces),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=bridge.hwaddr)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: -
+		//  shortdesc: MAC address for the bridge
+		"bridge.hwaddr": validate.Optional(validate.IsNetworkMAC),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=bridge.mtu)
+		//
+		// ---
+		//  type: integer
+		//  condition: -
+		//  default: `1500`
+		//  shortdesc: Bridge MTU (default varies if tunnel in use)
+		"bridge.mtu": validate.Optional(validate.IsNetworkMTU),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.address)
+		//
+		// ---
+		//  type: string
+		//  condition: standard mode
+		//  default: - (initial value on creation: `auto`)
+		//  shortdesc: IPv4 address for the bridge (use `none` to turn off IPv4 or `auto` to generate a new random unused subnet) (CIDR)
 		"ipv4.address": validate.Optional(func(value string) error {
 			if validate.IsOneOf("none", "auto")(value) == nil {
 				return nil
@@ -175,19 +229,122 @@ func (n *bridge) Validate(config map[string]string) error {
 
 			return validate.IsNetworkAddressCIDRV4(value)
 		}),
-		"ipv4.firewall":     validate.Optional(validate.IsBool),
-		"ipv4.nat":          validate.Optional(validate.IsBool),
-		"ipv4.nat.order":    validate.Optional(validate.IsOneOf("before", "after")),
-		"ipv4.nat.address":  validate.Optional(validate.IsNetworkAddressV4),
-		"ipv4.dhcp":         validate.Optional(validate.IsBool),
-		"ipv4.dhcp.gateway": validate.Optional(validate.IsNetworkAddressV4),
-		"ipv4.dhcp.expiry":  validate.IsAny,
-		"ipv4.dhcp.ranges":  validate.Optional(validate.IsListOf(validate.IsNetworkRangeV4)),
-		"ipv4.dhcp.routes":  validate.Optional(validate.IsDHCPRouteList),
-		"ipv4.routes":       validate.Optional(validate.IsListOf(validate.IsNetworkV4)),
-		"ipv4.routing":      validate.Optional(validate.IsBool),
-		"ipv4.ovn.ranges":   validate.Optional(validate.IsListOf(validate.IsNetworkRangeV4)),
 
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.firewall)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv4 address
+		//  default: `true`
+		//  shortdesc: Whether to generate filtering firewall rules for this network
+		"ipv4.firewall": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.nat)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv4 address
+		//  default: `false`(initial value on creation if `ipv4.address` is set to `auto`: `true`)
+		//  shortdesc: Whether to NAT
+		"ipv4.nat": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.nat.order)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv4 address
+		//  default: `before`
+		//  shortdesc: Whether to add the required NAT rules before or after any pre-existing rules
+		"ipv4.nat.order": validate.Optional(validate.IsOneOf("before", "after")),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.nat.address)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv4 address
+		//  default: -
+		//  shortdesc: The source address used for outbound traffic from the bridge
+		"ipv4.nat.address": validate.Optional(validate.IsNetworkAddressV4),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.dhcp)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv4 address
+		//  default: `true`
+		//  shortdesc: Whether to allocate addresses using DHCP
+		"ipv4.dhcp": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.dhcp.gateway)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv4 DHCP
+		//  default: IPv4 address
+		//  shortdesc: Address of the gateway for the subnet
+		"ipv4.dhcp.gateway": validate.Optional(validate.IsNetworkAddressV4),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.dhcp.expiry)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv4 DHCP
+		//  default: `1h`
+		//  shortdesc: When to expire DHCP leases
+		"ipv4.dhcp.expiry": validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.dhcp.ranges)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv4 DHCP
+		//  default: all addresses
+		//  shortdesc: Comma-separated list of IP ranges to use for DHCP (FIRST-LAST format)
+		"ipv4.dhcp.ranges": validate.Optional(validate.IsListOf(validate.IsNetworkRangeV4)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.dhcp.routes)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv4 DHCP
+		//  default: -
+		//  shortdesc: Static routes to provide via DHCP option 121, as a comma-separated list of alternating subnets (CIDR) and gateway addresses (same syntax as dnsmasq)
+		"ipv4.dhcp.routes": validate.Optional(validate.IsDHCPRouteList),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.routes)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv4 address
+		//  default: -
+		//  shortdesc: Comma-separated list of additional IPv4 CIDR subnets to route to the bridge
+		"ipv4.routes": validate.Optional(validate.IsListOf(validate.IsNetworkV4)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.routing)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv4 DHCP
+		//  default: `true`
+		//  shortdesc: Whether to route traffic in and out of the bridge
+		"ipv4.routing": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv4.ovn.ranges)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: -
+		//  shortdesc: Comma-separated list of IPv4 ranges to use for child OVN network routers (FIRST-LAST format)
+		"ipv4.ovn.ranges": validate.Optional(validate.IsListOf(validate.IsNetworkRangeV4)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.address)
+		//
+		// ---
+		//  type: string
+		//  condition: standard mode
+		//  default: - (initial value on creation: `auto`)
+		//  shortdesc: IPv6 address for the bridge (use `none` to turn off IPv6 or `auto` to generate a new random unused subnet) (CIDR)
 		"ipv6.address": validate.Optional(func(value string) error {
 			if validate.IsOneOf("none", "auto")(value) == nil {
 				return nil
@@ -195,30 +352,221 @@ func (n *bridge) Validate(config map[string]string) error {
 
 			return validate.IsNetworkAddressCIDRV6(value)
 		}),
-		"ipv6.firewall":                        validate.Optional(validate.IsBool),
-		"ipv6.nat":                             validate.Optional(validate.IsBool),
-		"ipv6.nat.order":                       validate.Optional(validate.IsOneOf("before", "after")),
-		"ipv6.nat.address":                     validate.Optional(validate.IsNetworkAddressV6),
-		"ipv6.dhcp":                            validate.Optional(validate.IsBool),
-		"ipv6.dhcp.expiry":                     validate.IsAny,
-		"ipv6.dhcp.stateful":                   validate.Optional(validate.IsBool),
-		"ipv6.dhcp.ranges":                     validate.Optional(validate.IsListOf(validate.IsNetworkRangeV6)),
-		"ipv6.routes":                          validate.Optional(validate.IsListOf(validate.IsNetworkV6)),
-		"ipv6.routing":                         validate.Optional(validate.IsBool),
-		"ipv6.ovn.ranges":                      validate.Optional(validate.IsListOf(validate.IsNetworkRangeV6)),
-		"dns.nameservers":                      validate.Optional(validate.IsListOf(validate.IsNetworkAddress)),
-		"dns.domain":                           validate.IsAny,
-		"dns.mode":                             validate.Optional(validate.IsOneOf("dynamic", "managed", "none")),
-		"dns.search":                           validate.IsAny,
-		"dns.zone.forward":                     validate.IsAny,
-		"dns.zone.reverse.ipv4":                validate.IsAny,
-		"dns.zone.reverse.ipv6":                validate.IsAny,
-		"raw.dnsmasq":                          validate.IsAny,
-		"security.acls":                        validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.firewall)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv6 address
+		//  default: `true`
+		//  shortdesc: Whether to generate filtering firewall rules for this network
+		"ipv6.firewall": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.nat)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv6 address
+		//  default: `false` (initial value on creation if `ipv6.address` is set to `auto`: `true`)
+		//  shortdesc: Whether to NAT
+		"ipv6.nat": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.nat.order)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv6 address
+		//  default: `before`
+		//  shortdesc: Whether to add the required NAT rules before or after any pre-existing rules
+		"ipv6.nat.order": validate.Optional(validate.IsOneOf("before", "after")),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.nat.address)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv6 address
+		//  default: -
+		//  shortdesc: The source address used for outbound traffic from the bridge
+		"ipv6.nat.address": validate.Optional(validate.IsNetworkAddressV6),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.dhcp)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv6 DHCP
+		//  default: `true`
+		//  shortdesc: Whether to provide additional network configuration over DHCP
+		"ipv6.dhcp": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.dhcp.expiry)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv6 DHCP
+		//  default: `1h`
+		//  shortdesc: When to expire DHCP leases
+		"ipv6.dhcp.expiry": validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.dhcp.stateful)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv6 DHCP
+		//  default: `false`
+		//  shortdesc: Whether to allocate addresses using DHCP
+		"ipv6.dhcp.stateful": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.dhcp.ranges)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv6 stateful DHCP
+		//  default: all addresses
+		//  shortdesc: Comma-separated list of IPv6 ranges to use for DHCP (FIRST-LAST format)
+		"ipv6.dhcp.ranges": validate.Optional(validate.IsListOf(validate.IsNetworkRangeV6)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.routes)
+		//
+		// ---
+		//  type: string
+		//  condition: IPv6 address
+		//  default: -
+		//  shortdesc: Comma-separated list of additional IPv6 CIDR subnets to route to the bridge
+		"ipv6.routes": validate.Optional(validate.IsListOf(validate.IsNetworkV6)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.routing)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv6 address
+		//  default: `true`
+		//  shortdesc: Whether to route traffic in and out of the bridge
+		"ipv6.routing": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.ovn.ranges)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: -
+		//  shortdesc: Comma-separated list of IPv6 ranges to use for child OVN network routers (FIRST-LAST format)
+		"ipv6.ovn.ranges": validate.Optional(validate.IsListOf(validate.IsNetworkRangeV6)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=dns.nameservers)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: IPv4 and IPv6 address
+		//  shortdesc: DNS server IPs to advertise to DHCP clients and via Router Advertisements. Both IPv4 and IPv6 addresses get pushed via DHCP, and IPv6 addresses are also advertised as RDNSS via RA.
+		"dns.nameservers": validate.Optional(validate.IsListOf(validate.IsNetworkAddress)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=dns.domain)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: `incus`
+		//  shortdesc: Domain to advertise to DHCP clients and use for DNS resolution
+		"dns.domain": validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=dns.mode)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: `managed`
+		//  shortdesc: DNS registration mode: none for no DNS record, managed for Incus-generated static records or dynamic for client-generated records
+		"dns.mode": validate.Optional(validate.IsOneOf("dynamic", "managed", "none")),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=dns.search)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: -
+		//  shortdesc: Full comma-separated domain search list, defaulting to `dns.domain` value
+		"dns.search": validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=dns.zone.forward)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: `managed`
+		//  shortdesc: Comma-separated list of DNS zone names for forward DNS records
+		"dns.zone.forward": validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=dns.zone.reverse.ipv4)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: `managed`
+		//  shortdesc: DNS zone name for IPv4 reverse DNS records
+		"dns.zone.reverse.ipv4": validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=dns.zone.reverse.ipv6)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: `managed`
+		//  shortdesc: DNS zone name for IPv6 reverse DNS records
+		"dns.zone.reverse.ipv6": validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=raw.dnsmasq)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: -
+		//  shortdesc: Additional dnsmasq configuration to append to the configuration file
+		"raw.dnsmasq": validate.IsAny,
+
+		// gendoc:generate(entity=network_bridge, group=common, key=security.acls)
+		//
+		// ---
+		//  type: string
+		//  condition: -
+		//  default: -
+		//  shortdesc: Comma-separated list of Network ACLs to apply to NICs connected to this network (see {ref}`network-acls-bridge-limitations`)
+		"security.acls": validate.IsAny,
+		// gendoc:generate(entity=network_bridge, group=common, key=security.acls.default.ingress.action)
+		//
+		// ---
+		//  type: string
+		//  condition: `security.acls`
+		//  default: `reject`
+		//  shortdesc: Action to use for ingress traffic that doesn't match any ACL rule
 		"security.acls.default.ingress.action": validate.Optional(validate.IsOneOf(acl.ValidActions...)),
-		"security.acls.default.egress.action":  validate.Optional(validate.IsOneOf(acl.ValidActions...)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=security.acls.default.egress.action)
+		//
+		// ---
+		//  type: string
+		//  condition: `security.acls`
+		//  default: `reject`
+		//  shortdesc: Action to use for egress traffic that doesn't match any ACL rule
+		"security.acls.default.egress.action": validate.Optional(validate.IsOneOf(acl.ValidActions...)),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=security.acls.default.ingress.logged)
+		//
+		// ---
+		//  type: bool
+		//  condition: `security.acls`
+		//  default: `false`
+		//  shortdesc: Whether to log ingress traffic that doesn't match any ACL rule
 		"security.acls.default.ingress.logged": validate.Optional(validate.IsBool),
-		"security.acls.default.egress.logged":  validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_bridge, group=common, key=security.acls.default.egress.logged)
+		//
+		// ---
+		//  type: bool
+		//  condition: `security.acls`
+		//  default: `false`
+		//  shortdesc: Whether to log egress traffic that doesn't match any ACL rule
+		"security.acls.default.egress.logged": validate.Optional(validate.IsBool),
 	}
 
 	// Add dynamic validation rules.
@@ -240,24 +588,112 @@ func (n *bridge) Validate(config map[string]string) error {
 			// Add the correct validation rule for the dynamic field based on last part of key.
 			switch tunnelKey {
 			case "protocol":
+				// gendoc:generate(entity=network_bridge, group=common, key=tunnel.NAME.protocol)
+				//
+				// ---
+				//  type: string
+				//  condition: standard mode
+				//  default: -
+				//  shortdesc: Tunneling protocol: `vxlan` or `gre`
 				rules[k] = validate.Optional(validate.IsOneOf("gre", "vxlan"))
 			case "local":
+				// gendoc:generate(entity=network_bridge, group=common, key=tunnel.NAME.local)
+				//
+				// ---
+				//  type: string
+				//  condition: `gre` or `vxlan`
+				//  default: -
+				//  shortdesc: Local address for the tunnel (not necessary for multicast `vxlan`)
 				rules[k] = validate.Optional(validate.IsNetworkAddress)
 			case "remote":
+				// gendoc:generate(entity=network_bridge, group=common, key=tunnel.NAME.remote)
+				//
+				// ---
+				//  type: string
+				//  condition: `gre` or `vxlan`
+				//  default: -
+				//  shortdesc: Remote address for the tunnel (not necessary for multicast `vxlan`)
 				rules[k] = validate.Optional(validate.IsNetworkAddress)
 			case "port":
+				// gendoc:generate(entity=network_bridge, group=common, key=tunnel.NAME.port)
+				//
+				// ---
+				//  type: integer
+				//  condition: `vxlan`
+				//  default: `0`
+				//  shortdesc: Specific port to use for the `vxlan` tunnel
 				rules[k] = networkValidPort
 			case "group":
+				// gendoc:generate(entity=network_bridge, group=common, key=tunnel.NAME.group)
+				//
+				// ---
+				//  type: string
+				//  condition: `vxlan`
+				//  default: `239.0.0.1`
+				//  shortdesc: Multicast address for `vxlan` (used if local and remote aren't set)
 				rules[k] = validate.Optional(validate.IsNetworkAddress)
 			case "id":
+				// gendoc:generate(entity=network_bridge, group=common, key=tunnel.NAME.id)
+				//
+				// ---
+				//  type: integer
+				//  condition: `vxlan`
+				//  default: `0`
+				//  shortdesc: Specific tunnel ID to use for the `vxlan` tunnel
 				rules[k] = validate.Optional(validate.IsInt64)
 			case "interface":
+				// gendoc:generate(entity=network_bridge, group=common, key=tunnel.NAME.interface)
+				//
+				// ---
+				//  type: string
+				//  condition: `vxlan`
+				//  default: -
+				//  shortdesc: Specific host interface to use for the tunnel
 				rules[k] = validate.IsInterfaceName
 			case "ttl":
+				// gendoc:generate(entity=network_bridge, group=common, key=tunnel.NAME.ttl)
+				//
+				// ---
+				//  type: integer
+				//  condition: `vxlan`
+				//  default: `1`
+				//  shortdesc: Specific TTL to use for multicast routing topologies
 				rules[k] = validate.Optional(validate.IsUint8)
 			}
 		}
 	}
+
+	// gendoc:generate(entity=network_bridge, group=bgp, key=bgp.peers.NAME.address)
+	//
+	// ---
+	// type: string
+	// condition: BGP server
+	// defaultdesc: -
+	// shortdesc: Peer address (IPv4 or IPv6) for use by `ovn` downstream networks
+
+	// gendoc:generate(entity=network_bridge, group=bgp, key=bgp.peers.NAME.asn)
+	//
+	// ---
+	// type: integer
+	// condition: BGP server
+	// defaultdesc: -
+	// shortdesc: Peer AS number for use by `ovn` downstream networks
+
+	// gendoc:generate(entity=network_bridge, group=bgp, key=bgp.peers.NAME.password)
+	//
+	// ---
+	// type: string
+	// condition: BGP server
+	// defaultdesc: - (no password)
+	// shortdesc: Peer session password (optional) for use by `ovn` downstream networks
+
+	// gendoc:generate(entity=network_bridge, group=bgp, key=bgp.peers.NAME.holdtime)
+	//
+	// ---
+	// type: integer
+	// condition: BGP server
+	// defaultdesc: `180`
+	// shortdesc: Peer session hold time (in seconds; optional)
 
 	// Add the BGP validation rules.
 	bgpRules, err := n.bgpValidationRules(config)
@@ -268,6 +704,14 @@ func (n *bridge) Validate(config map[string]string) error {
 	for k, v := range bgpRules {
 		rules[k] = v
 	}
+
+	// gendoc:generate(entity=network_bridge, group=common, key=user.*)
+	//
+	// ---
+	//  type: string
+	//  condition: -
+	//  default: -
+	//  shortdesc: User-provided free-form key/value pairs
 
 	// Validate the configuration.
 	err = n.validate(config, rules)
@@ -481,17 +925,17 @@ func (n *bridge) Rename(newName string) error {
 func (n *bridge) Start() error {
 	n.logger.Debug("Start")
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
-	revert.Add(func() { n.setUnavailable() })
+	reverter.Add(func() { n.setUnavailable() })
 
 	err := n.setup(nil)
 	if err != nil {
 		return err
 	}
 
-	revert.Success()
+	reverter.Success()
 
 	// Ensure network is marked as available now its started.
 	n.setAvailable()
@@ -508,8 +952,8 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 	n.logger.Debug("Setting up network")
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Create directory.
 	if !util.PathExists(internalUtil.VarPath("networks", n.name)) {
@@ -605,7 +1049,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 				return err
 			}
 
-			revert.Add(func() { _ = vswitch.DeleteBridge(context.Background(), n.name) })
+			reverter.Add(func() { _ = vswitch.DeleteBridge(context.Background(), n.name) })
 		} else {
 			// Add and configure the interface in one operation to reduce the number of executions and
 			// to avoid systemd-udevd from applying the default MACAddressPolicy=persistent policy.
@@ -614,7 +1058,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 				return err
 			}
 
-			revert.Add(func() { _ = bridge.Delete() })
+			reverter.Add(func() { _ = bridge.Delete() })
 		}
 	} else {
 		// If bridge already exists then re-apply settings. If we just created a bridge then we don't
@@ -683,7 +1127,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 		err = dummy.Add()
 		if err == nil {
-			revert.Add(func() { _ = dummy.Delete() })
+			reverter.Add(func() { _ = dummy.Delete() })
 			err = dummy.SetUp()
 			if err == nil {
 				_ = AttachInterface(n.state, n.name, fmt.Sprintf("%s-mtu", n.name))
@@ -899,7 +1343,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 		// --quiet options are only supported on >2.67.
 		minVer, _ := version.NewDottedVersion("2.67")
 
-		if err == nil && dnsmasqVersion.Compare(minVer) > 0 {
+		if dnsmasqVersion.Compare(minVer) > 0 {
 			dnsmasqCmd = append(dnsmasqCmd, []string{"--quiet-dhcp", "--quiet-dhcp6", "--quiet-ra"}...)
 		}
 	}
@@ -1232,7 +1676,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 		// Configure the tunnel.
 		if tunProtocol == "gre" {
 			// Skip partial configs.
-			if tunProtocol == "" || tunLocal == "" || tunRemote == "" {
+			if tunLocal == "" || tunRemote == "" {
 				continue
 			}
 
@@ -1249,11 +1693,6 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 		} else if tunProtocol == "vxlan" {
 			tunGroup := getConfig("group")
 			tunInterface := getConfig("interface")
-
-			// Skip partial configs.
-			if tunProtocol == "" {
-				continue
-			}
 
 			vxlan := &ip.Vxlan{
 				Link:  ip.Link{Name: tunName},
@@ -1447,7 +1886,7 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 		if err != nil {
 			// Kill Process if started, but could not save the file.
 			err2 := p.Stop()
-			if err != nil {
+			if err2 != nil {
 				return fmt.Errorf("Could not kill subprocess while handling saving error: %s: %s", err, err2)
 			}
 
@@ -1475,9 +1914,26 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 	// Setup firewall.
 	n.logger.Debug("Setting up firewall")
+
+	if n.state.Firewall.String() == "nftables" {
+		n.logger.Debug("Address set feature enabled for nftables backend")
+		fwOpts.AddressSet = true
+	}
+
 	err = n.state.Firewall.NetworkSetup(n.name, fwOpts)
 	if err != nil {
 		return fmt.Errorf("Failed to setup firewall: %w", err)
+	}
+
+	// Setup named sets for nft firewall.
+	// We apply all available address sets to avoid missing some.
+	if fwOpts.AddressSet {
+		n.logger.Debug("Applying up firewall address sets")
+		aclNames := util.SplitNTrimSpace(n.config["security.acls"], ",", -1, false)
+		err = addressset.FirewallApplyAddressSetsForACLRules(n.state, "inet", n.Project(), aclNames)
+		if err != nil {
+			return err
+		}
 	}
 
 	if fwOpts.ACL {
@@ -1507,7 +1963,8 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 		return err
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -1609,13 +2066,13 @@ func (n *bridge) Update(newNetwork api.NetworkPut, targetNode string, clientType
 		return n.common.update(newNetwork, targetNode, clientType)
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Perform any pre-update cleanup needed if local member network was already created.
 	if len(changedKeys) > 0 {
 		// Define a function which reverts everything.
-		revert.Add(func() {
+		reverter.Add(func() {
 			// Reset changes to all nodes and database.
 			_ = n.common.update(oldNetwork, targetNode, clientType)
 
@@ -1687,7 +2144,8 @@ func (n *bridge) Update(newNetwork api.NetworkPut, targetNode string, clientType
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -1855,6 +2313,7 @@ func (n *bridge) forwardConvertToFirewallForwards(listenAddress net.IP, defaultT
 			TargetAddress: portMap.target.address,
 			ListenPorts:   portMap.listenPorts,
 			TargetPorts:   portMap.target.ports,
+			SNAT:          portMap.snat,
 		})
 	}
 
@@ -2173,8 +2632,8 @@ func (n *bridge) ForwardCreate(forward api.NetworkForwardsPost, clientType reque
 		}
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	var forwardID int64
 
@@ -2188,7 +2647,7 @@ func (n *bridge) ForwardCreate(forward api.NetworkForwardsPost, clientType reque
 		return err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 			return tx.DeleteNetworkForward(ctx, n.ID(), forwardID)
 		})
@@ -2282,7 +2741,8 @@ func (n *bridge) ForwardCreate(forward api.NetworkForwardsPost, clientType reque
 		return fmt.Errorf("Failed applying BGP prefixes for address forwards: %w", err)
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -2328,8 +2788,8 @@ func (n *bridge) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, 
 		return nil // Nothing has changed.
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 		return tx.UpdateNetworkForward(ctx, n.ID(), curForwardID, &newForward.NetworkForwardPut)
@@ -2338,7 +2798,7 @@ func (n *bridge) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, 
 		return err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 			return tx.UpdateNetworkForward(ctx, n.ID(), curForwardID, &curForward.NetworkForwardPut)
 		})
@@ -2351,7 +2811,8 @@ func (n *bridge) ForwardUpdate(listenAddress string, req api.NetworkForwardPut, 
 		return err
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -2372,8 +2833,8 @@ func (n *bridge) ForwardDelete(listenAddress string, clientType request.ClientTy
 		return err
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 		return tx.DeleteNetworkForward(ctx, n.ID(), forwardID)
@@ -2382,7 +2843,7 @@ func (n *bridge) ForwardDelete(listenAddress string, clientType request.ClientTy
 		return err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		newForward := api.NetworkForwardsPost{
 			NetworkForwardPut: forward.NetworkForwardPut,
 			ListenAddress:     forward.ListenAddress,
@@ -2409,7 +2870,8 @@ func (n *bridge) ForwardDelete(listenAddress string, clientType request.ClientTy
 		return fmt.Errorf("Failed applying BGP prefixes for address forwards: %w", err)
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -2741,7 +3203,8 @@ func (n *bridge) deleteChildren() error {
 	for _, iface := range ifaces {
 		l, err := ip.LinkFromName(iface.Name)
 		if err != nil {
-			return err
+			// If we can't load the link, chances are the interface isn't one that we should be deleting.
+			continue
 		}
 
 		if l.Master != n.name || slices.Contains(externalInterfaces, iface.Name) || !slices.Contains(kinds, l.Kind) {

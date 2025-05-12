@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/user"
 	"path"
@@ -340,7 +341,7 @@ func main() {
 	err = app.Execute()
 	if err != nil {
 		// Handle non-Linux systems
-		if err == config.ErrNotLinux {
+		if errors.Is(err, config.ErrNotLinux) {
 			fmt.Fprintf(os.Stderr, i18n.G(`This client hasn't been configured to use a remote server yet.
 As your platform can't run native Linux instances, you must connect to a remote server.
 
@@ -467,8 +468,11 @@ func (c *cmdGlobal) PreRun(cmd *cobra.Command, _ []string) error {
 			}
 
 			if !slices.Contains([]string{"admin", "create", "launch"}, cmd.Name()) && (cmd.Parent() == nil || cmd.Parent().Name() != "admin") {
-				fmt.Fprintf(os.Stderr, i18n.G(`To start your first container, try: incus launch images:ubuntu/22.04
-Or for a virtual machine: incus launch images:ubuntu/22.04 --vm`)+"\n")
+				images := []string{"debian/12", "fedora/42", "opensuse/tumbleweed", "ubuntu/24.04"}
+				image := images[rand.Intn(len(images))]
+
+				fmt.Fprintf(os.Stderr, i18n.G(`To start your first container, try: incus launch images:%s
+Or for a virtual machine: incus launch images:%s --vm`)+"\n", image, image)
 				flush = true
 			}
 
@@ -563,4 +567,13 @@ func (c *cmdGlobal) checkArgs(cmd *cobra.Command, args []string, minArgs int, ma
 	}
 
 	return false, nil
+}
+
+// Return the default list format if the user configured it, otherwise just return "table".
+func (c *cmdGlobal) defaultListFormat() string {
+	if c.conf == nil || c.conf.Defaults.ListFormat == "" {
+		return "table"
+	}
+
+	return c.conf.Defaults.ListFormat
 }

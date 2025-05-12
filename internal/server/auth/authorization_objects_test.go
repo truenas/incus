@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	localtls "github.com/lxc/incus/v6/shared/tls"
+	"github.com/lxc/incus/v6/shared/tls/tlstest"
 )
 
 type objectSuite struct {
@@ -14,12 +14,12 @@ type objectSuite struct {
 }
 
 func TestObjectSuite(t *testing.T) {
-	suite.Run(t, new(objectSuite))
+	suite.Run(t, &objectSuite{})
 }
 
 func (s *objectSuite) TestObjectCertificate() {
 	s.Assert().NotPanics(func() {
-		fingerprint := localtls.TestingKeyPair().Fingerprint()
+		fingerprint := tlstest.TestingKeyPair(s.T()).Fingerprint()
 		o := ObjectCertificate(fingerprint)
 		s.Equal(fmt.Sprintf("certificate:%s", fingerprint), string(o))
 	})
@@ -27,7 +27,7 @@ func (s *objectSuite) TestObjectCertificate() {
 
 func (s *objectSuite) TestObjectImage() {
 	s.Assert().NotPanics(func() {
-		fingerprint := localtls.TestingKeyPair().Fingerprint()
+		fingerprint := tlstest.TestingKeyPair(s.T()).Fingerprint()
 		o := ObjectImage("default", fingerprint)
 		s.Equal(fmt.Sprintf("image:default/%s", fingerprint), string(o))
 	})
@@ -58,6 +58,13 @@ func (s *objectSuite) TestObjectNetworkACL() {
 	s.Assert().NotPanics(func() {
 		o := ObjectNetworkACL("default", "network_acl_name")
 		s.Equal("network_acl:default/network_acl_name", string(o))
+	})
+}
+
+func (s *objectSuite) TestObjectNetworkAddressSet() {
+	s.Assert().NotPanics(func() {
+		o := ObjectNetworkAddressSet("default", "network_address_set_name")
+		s.Equal("network_address_set:default/network_address_set_name", string(o))
 	})
 }
 
@@ -168,6 +175,10 @@ func (s *objectSuite) TestObjectFromString() {
 		{
 			in:  "network_acl:default/acl1",
 			out: Object("network_acl:default/acl1"),
+		},
+		{
+			in:  "network_address_set:default/as1",
+			out: Object("network_address_set:default/as1"),
 		},
 		{
 			in:  "network_zone:default/example.com",

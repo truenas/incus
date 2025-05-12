@@ -2,6 +2,7 @@ package drivers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -95,13 +96,10 @@ func (d *lvm) openLoopFile(source string) (string, error) {
 // isLVMNotFoundExitError checks whether the supplied error is an exit error from an LVM command
 // meaning that the object was not found. Returns true if it is (exit status 5) false if not.
 func (d *lvm) isLVMNotFoundExitError(err error) bool {
-	runErr, ok := err.(subprocess.RunError)
-	if ok {
-		exitError, ok := runErr.Unwrap().(*exec.ExitError)
-		if ok {
-			if exitError.ExitCode() == 5 {
-				return true
-			}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		if exitError.ExitCode() == 5 {
+			return true
 		}
 	}
 
@@ -461,8 +459,8 @@ func (d *lvm) createLogicalVolumeSnapshot(vgName string, srcVol Volume, snapVol 
 		args = append(args, "-prw")
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// If clustered, we need to acquire exclusive write access for this operation.
 	if d.clustered && !makeThinLv {
@@ -484,13 +482,13 @@ func (d *lvm) createLogicalVolumeSnapshot(vgName string, srcVol Volume, snapVol 
 
 	d.logger.Debug("Logical volume snapshot created", logCtx)
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = d.removeLogicalVolume(d.lvmDevPath(vgName, snapVol.volType, snapVol.contentType, snapVol.name))
 	})
 
 	targetVolDevPath := d.lvmDevPath(vgName, snapVol.volType, snapVol.contentType, snapVol.name)
 
-	revert.Success()
+	reverter.Success()
 	return targetVolDevPath, nil
 }
 
@@ -591,8 +589,8 @@ func (d *lvm) resizeLogicalVolume(lvPath string, sizeBytes int64) error {
 
 // copyThinpoolVolume makes an optimised copy of a thinpool volume by using thinpool snapshots.
 func (d *lvm) copyThinpoolVolume(vol, srcVol Volume, srcSnapshots []Volume, refresh bool) error {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	removeVols := []string{}
 
@@ -624,7 +622,7 @@ func (d *lvm) copyThinpoolVolume(vol, srcVol Volume, srcSnapshots []Volume, refr
 				return err
 			}
 
-			revert.Add(func() { _ = os.RemoveAll(newSnapVolPath) })
+			reverter.Add(func() { _ = os.RemoveAll(newSnapVolPath) })
 
 			// We do not modify the original snapshot so as to avoid damaging if it is corrupted for
 			// some reason. If the filesystem needs to have a unique UUID generated in order to mount
@@ -634,7 +632,7 @@ func (d *lvm) copyThinpoolVolume(vol, srcVol Volume, srcSnapshots []Volume, refr
 				return fmt.Errorf("Error creating LVM logical volume snapshot: %w", err)
 			}
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				_ = d.removeLogicalVolume(d.lvmDevPath(d.config["lvm.vg_name"], newSnapVol.volType, newSnapVol.contentType, newSnapVol.name))
 			})
 		}
@@ -661,7 +659,7 @@ func (d *lvm) copyThinpoolVolume(vol, srcVol Volume, srcSnapshots []Volume, refr
 			// Record this volume to be removed at the very end.
 			removeVols = append(removeVols, tmpVolName)
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				// Rename the original volume back to the original name.
 				_ = d.renameLogicalVolume(tmpVolDevPath, newVolDevPath)
 			})
@@ -675,7 +673,7 @@ func (d *lvm) copyThinpoolVolume(vol, srcVol Volume, srcSnapshots []Volume, refr
 			return err
 		}
 
-		revert.Add(func() { _ = os.RemoveAll(volPath) })
+		reverter.Add(func() { _ = os.RemoveAll(volPath) })
 	}
 
 	// Create snapshot of source volume as new volume.
@@ -686,7 +684,7 @@ func (d *lvm) copyThinpoolVolume(vol, srcVol Volume, srcSnapshots []Volume, refr
 
 	volDevPath := d.lvmDevPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.name)
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = d.removeLogicalVolume(volDevPath)
 	})
 
@@ -731,7 +729,7 @@ func (d *lvm) copyThinpoolVolume(vol, srcVol Volume, srcSnapshots []Volume, refr
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -11,7 +12,6 @@ import (
 	"github.com/lxc/incus/v6/internal/server/auth"
 	"github.com/lxc/incus/v6/internal/server/db"
 	"github.com/lxc/incus/v6/internal/server/instance"
-	"github.com/lxc/incus/v6/internal/server/instance/instancetype"
 	"github.com/lxc/incus/v6/internal/server/project"
 	"github.com/lxc/incus/v6/internal/server/request"
 	"github.com/lxc/incus/v6/internal/server/response"
@@ -120,11 +120,11 @@ func storagePoolVolumeTypeStateGet(d *Daemon, r *http.Request) response.Response
 	if volumeType == db.StoragePoolVolumeTypeCustom {
 		// Custom volumes.
 		usage, err = pool.GetCustomVolumeUsage(projectName, volumeName)
-		if err != nil && err != storageDrivers.ErrNotSupported {
+		if err != nil && !errors.Is(err, storageDrivers.ErrNotSupported) {
 			return response.SmartError(err)
 		}
 	} else {
-		resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, volumeName, instancetype.Any)
+		resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, volumeName)
 		if err != nil {
 			return response.SmartError(err)
 		}
@@ -140,7 +140,7 @@ func storagePoolVolumeTypeStateGet(d *Daemon, r *http.Request) response.Response
 		}
 
 		usage, err = pool.GetInstanceUsage(inst)
-		if err != nil && err != storageDrivers.ErrNotSupported {
+		if err != nil && !errors.Is(err, storageDrivers.ErrNotSupported) {
 			return response.SmartError(err)
 		}
 	}

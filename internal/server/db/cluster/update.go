@@ -112,6 +112,37 @@ var updates = map[int]schema.Update{
 	73: updateFromV72,
 	74: updateFromV73,
 	75: updateFromV74,
+	76: updateFromV75,
+}
+
+func updateFromV75(ctx context.Context, tx *sql.Tx) error {
+	q := `
+CREATE TABLE "networks_address_sets" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    project_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    addresses TEXT NOT NULL,
+    description TEXT,
+    UNIQUE (name)
+    UNIQUE (project_id, name),
+    FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+);
+
+CREATE TABLE "networks_address_sets_config" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    network_address_set_id INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    UNIQUE (network_address_set_id, key),
+    FOREIGN KEY (network_address_set_id) REFERENCES networks_address_sets (id) ON DELETE CASCADE
+);
+`
+	_, err := tx.Exec(q)
+	if err != nil {
+		return fmt.Errorf("Failed creating networks_address_sets and networks_address_sets_external_ids tables: %w", err)
+	}
+
+	return nil
 }
 
 // updateFromV74 removes the index preventing the same integration to be used multiple times.
@@ -4426,7 +4457,7 @@ FROM storage_volumes
 
 	// Duplicate each volume row across all nodes, and keep track of the
 	// new volume IDs that we've inserted.
-	created := make(map[int][]int64, 0) // Existing volume ID to new volumes IDs.
+	created := make(map[int][]int64) // Existing volume ID to new volumes IDs.
 	columns := []string{"name", "storage_pool_id", "node_id", "type", "description"}
 	for _, volume := range volumes {
 		for _, nodeID := range nodeIDs {

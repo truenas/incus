@@ -65,6 +65,7 @@ type cmdConfigTemplateCreate struct {
 func (c *cmdConfigTemplateCreate) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("create", i18n.G("[<remote>:]<instance> <template>"))
+	cmd.Aliases = []string{"add"}
 	cmd.Short = i18n.G("Create new instance file templates")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Create new instance file templates`))
@@ -134,7 +135,7 @@ type cmdConfigTemplateDelete struct {
 func (c *cmdConfigTemplateDelete) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("delete", i18n.G("[<remote>:]<instance> <template>"))
-	cmd.Aliases = []string{"rm"}
+	cmd.Aliases = []string{"rm", "remove"}
 	cmd.Short = i18n.G("Delete instance file templates")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Delete instance file templates`))
@@ -296,7 +297,7 @@ func (c *cmdConfigTemplateList) Command() *cobra.Command {
 	cmd.Short = i18n.G("List instance file templates")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`List instance file templates`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())

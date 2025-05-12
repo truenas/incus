@@ -24,9 +24,33 @@ func (n *sriov) DBType() db.NetworkType {
 // Validate network config.
 func (n *sriov) Validate(config map[string]string) error {
 	rules := map[string]func(value string) error{
+		// gendoc:generate(entity=network_sriov, group=common, key=parent)
+		//
+		// ---
+		// type: string
+		// condition: -
+		// shortdesc: Parent interface to create `sriov` NICs on
 		"parent": validate.Required(validate.IsNotEmpty, validate.IsInterfaceName),
-		"mtu":    validate.Optional(validate.IsNetworkMTU),
-		"vlan":   validate.Optional(validate.IsNetworkVLAN),
+		// gendoc:generate(entity=network_sriov, group=common, key=mtu)
+		//
+		// ---
+		// type: integer
+		// condition: -
+		// shortdesc: The MTU of the new interface
+		"mtu": validate.Optional(validate.IsNetworkMTU),
+		// gendoc:generate(entity=network_sriov, group=common, key=vlan)
+		//
+		// ---
+		// type: integer
+		// condition: -
+		// shortdesc: The VLAN ID to attach to
+		"vlan": validate.Optional(validate.IsNetworkVLAN),
+		// gendoc:generate(entity=network_sriov, group=common, key=user.*)
+		//
+		// ---
+		// type: string
+		// condition: -
+		// shortdesc: User-provided free-form key/value pairs
 	}
 
 	err := n.validate(config, rules)
@@ -61,16 +85,16 @@ func (n *sriov) Rename(newName string) error {
 func (n *sriov) Start() error {
 	n.logger.Debug("Start")
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
-	revert.Add(func() { n.setUnavailable() })
+	reverter.Add(func() { n.setUnavailable() })
 
 	if !InterfaceExists(n.config["parent"]) {
 		return fmt.Errorf("Parent interface %q not found", n.config["parent"])
 	}
 
-	revert.Success()
+	reverter.Success()
 
 	// Ensure network is marked as available now its started.
 	n.setAvailable()
@@ -106,11 +130,11 @@ func (n *sriov) Update(newNetwork api.NetworkPut, targetNode string, clientType 
 		return n.common.update(newNetwork, targetNode, clientType)
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Define a function which reverts everything.
-	revert.Add(func() {
+	reverter.Add(func() {
 		// Reset changes to all nodes and database.
 		_ = n.common.update(oldNetwork, targetNode, clientType)
 	})
@@ -121,6 +145,6 @@ func (n *sriov) Update(newNetwork api.NetworkPut, targetNode string, clientType 
 		return err
 	}
 
-	revert.Success()
+	reverter.Success()
 	return nil
 }

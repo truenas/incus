@@ -43,7 +43,7 @@ func Load(schema Schema, values map[string]string) (Map, error) {
 func (m *Map) Change(changes map[string]string) (map[string]string, error) {
 	values := make(map[string]string, len(m.schema))
 
-	errors := ErrorList{}
+	errors := &ErrorList{}
 	for name, change := range changes {
 		// Ensure that we were actually passed a string.
 		s := reflect.ValueOf(change)
@@ -107,6 +107,20 @@ func (m *Map) GetRaw(name string) string {
 	if internalInstance.IsUserConfig(name) {
 		return value
 	}
+
+	if IsLoggingConfig(name) {
+		if !ok {
+			key, err := GetLoggingRuleForKey(name)
+			if err != nil {
+				panic(err)
+			}
+
+			value = key.Default
+		}
+
+		return value
+	}
+
 	// Schema key
 	key := m.schema.mustGetKey(name)
 	if !ok {
@@ -118,7 +132,7 @@ func (m *Map) GetRaw(name string) string {
 
 // GetString returns the value of the given key, which must be of type String.
 func (m *Map) GetString(name string) string {
-	if !internalInstance.IsUserConfig(name) {
+	if !internalInstance.IsUserConfig(name) && !IsLoggingConfig(name) {
 		m.schema.assertKeyType(name, String)
 	}
 
@@ -133,7 +147,10 @@ func (m *Map) GetBool(name string) bool {
 
 // GetInt64 returns the value of the given key, which must be of type Int64.
 func (m *Map) GetInt64(name string) int64 {
-	m.schema.assertKeyType(name, Int64)
+	if !IsLoggingConfig(name) {
+		m.schema.assertKeyType(name, Int64)
+	}
+
 	n, err := strconv.ParseInt(m.GetRaw(name), 10, 64)
 	if err != nil {
 		panic(fmt.Sprintf("cannot convert to int64: %v", err))
@@ -156,7 +173,7 @@ func (m *Map) update(values map[string]string) ([]string, error) {
 
 	// Update our keys with the values from the given map, and keep track
 	// of which keys actually changed their value.
-	errors := ErrorList{}
+	errors := &ErrorList{}
 	names := []string{}
 	for name, value := range values {
 		changed, err := m.set(name, value, initial)
@@ -206,6 +223,15 @@ func (m *Map) set(name string, value string, initial bool) (bool, error) {
 		}
 
 		return true, nil
+	}
+
+	if IsLoggingConfig(name) {
+		rule, err := GetLoggingRuleForKey(name)
+		if err != nil {
+			return false, err
+		}
+
+		m.schema[name] = rule
 	}
 
 	key, ok := m.schema[name]

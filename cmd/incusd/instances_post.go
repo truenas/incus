@@ -43,7 +43,7 @@ import (
 	"github.com/lxc/incus/v6/shared/util"
 )
 
-func ensureDownloadedImageFitWithinBudget(ctx context.Context, s *state.State, r *http.Request, op *operations.Operation, p api.Project, img *api.Image, imgAlias string, source api.InstanceSource, imgType string) (*api.Image, error) {
+func ensureDownloadedImageFitWithinBudget(ctx context.Context, s *state.State, r *http.Request, op *operations.Operation, p api.Project, imgAlias string, source api.InstanceSource, imgType string) (*api.Image, error) {
 	var autoUpdate bool
 	var err error
 	if p.Config["images.auto_update_cached"] != "" {
@@ -117,12 +117,12 @@ func createFromImage(s *state.State, r *http.Request, p api.Project, profiles []
 		}
 
 		if req.Source.Server != "" {
-			img, err = ensureDownloadedImageFitWithinBudget(context.TODO(), s, r, op, p, img, imgAlias, req.Source, string(req.Type))
+			img, err = ensureDownloadedImageFitWithinBudget(context.TODO(), s, r, op, p, imgAlias, req.Source, string(req.Type))
 			if err != nil {
 				return err
 			}
 		} else if img != nil {
-			err := ensureImageIsLocallyAvailable(context.TODO(), s, r, img, args.Project, args.Type)
+			err := ensureImageIsLocallyAvailable(context.TODO(), s, r, img, args.Project)
 			if err != nil {
 				return err
 			}
@@ -136,7 +136,7 @@ func createFromImage(s *state.State, r *http.Request, p api.Project, profiles []
 		}
 
 		// Actually create the instance.
-		err = instanceCreateFromImage(context.TODO(), s, r, img, args, op)
+		err = instanceCreateFromImage(context.TODO(), s, img, args, op)
 		if err != nil {
 			return err
 		}
@@ -311,8 +311,8 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 		}
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	instanceOnly := req.Source.InstanceOnly
 
@@ -324,14 +324,14 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 
 		// Create the instance DB record for main instance.
 		// Note: At this stage we do not yet know if snapshots are going to be received and so we cannot
-		// create their DB records. This will be done if needed in the migrationSink.Do() function called
+		// create their DB records. This will be done if needed in the migrationSink.do() function called
 		// as part of the operation below.
 		inst, instOp, cleanup, err = instance.CreateInternal(s, args, nil, true, false)
 		if err != nil {
 			return response.InternalError(fmt.Errorf("Failed creating instance record: %w", err))
 		}
 
-		revert.Add(cleanup)
+		reverter.Add(cleanup)
 	} else {
 		instOp, err = inst.LockExclusive()
 		if err != nil {
@@ -339,7 +339,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 		}
 	}
 
-	revert.Add(func() { instOp.Done(err) })
+	reverter.Add(func() { instOp.Done(err) })
 
 	push := false
 	var dialer *websocket.Dialer
@@ -381,15 +381,15 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 	}
 
 	// Copy reverter so far so we can use it inside run after this function has finished.
-	runRevert := revert.Clone()
+	runReverter := reverter.Clone()
 
 	run := func(op *operations.Operation) error {
-		defer runRevert.Fail()
+		defer runReverter.Fail()
 
 		sink.instance.SetOperation(op)
 
 		// And finally run the migration.
-		err = sink.Do(s, instOp)
+		err = sink.do(instOp)
 		if err != nil {
 			err = fmt.Errorf("Error transferring instance data: %w", err)
 			instOp.Done(err) // Complete operation that was created earlier, to release lock.
@@ -448,7 +448,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 			}
 		}
 
-		runRevert.Success()
+		runReverter.Success()
 
 		return instanceCreateFinish(s, req, args, op)
 	}
@@ -469,7 +469,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
 	return operations.OperationResponse(op)
 }
 
@@ -633,8 +633,8 @@ func createFromCopy(ctx context.Context, s *state.State, r *http.Request, projec
 }
 
 func createFromBackup(s *state.State, r *http.Request, projectName string, data io.Reader, pool string, instanceName string) response.Response {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Create temporary file to store uploaded backup data.
 	backupFile, err := os.CreateTemp(internalUtil.VarPath("backups"), fmt.Sprintf("%s_", backup.WorkingDirPrefix))
@@ -643,7 +643,7 @@ func createFromBackup(s *state.State, r *http.Request, projectName string, data 
 	}
 
 	defer func() { _ = os.Remove(backupFile.Name()) }()
-	revert.Add(func() { _ = backupFile.Close() })
+	reverter.Add(func() { _ = backupFile.Close() })
 
 	// Stream uploaded backup data into temporary file.
 	_, err = io.Copy(backupFile, data)
@@ -780,11 +780,11 @@ func createFromBackup(s *state.State, r *http.Request, projectName string, data 
 	}
 
 	// Copy reverter so far so we can use it inside run after this function has finished.
-	runRevert := revert.Clone()
+	runReverter := reverter.Clone()
 
 	run := func(op *operations.Operation) error {
 		defer func() { _ = backupFile.Close() }()
-		defer runRevert.Fail()
+		defer runReverter.Fail()
 
 		pool, err := storagePools.LoadByName(s, bInfo.Pool)
 		if err != nil {
@@ -806,7 +806,7 @@ func createFromBackup(s *state.State, r *http.Request, projectName string, data 
 			return fmt.Errorf("Create instance from backup: %w", err)
 		}
 
-		runRevert.Add(revertHook)
+		runReverter.Add(revertHook)
 
 		err = internalImportFromBackup(context.TODO(), s, bInfo.Project, bInfo.Name, instanceName != "")
 		if err != nil {
@@ -819,7 +819,7 @@ func createFromBackup(s *state.State, r *http.Request, projectName string, data 
 		}
 
 		// Clean up created instance if the post hook fails below.
-		runRevert.Add(func() { _ = inst.Delete(true) })
+		runReverter.Add(func() { _ = inst.Delete(true) })
 
 		// Run the storage post hook to perform any final actions now that the instance has been created
 		// in the database (this normally includes unmounting volumes that were mounted).
@@ -830,7 +830,7 @@ func createFromBackup(s *state.State, r *http.Request, projectName string, data 
 			}
 		}
 
-		runRevert.Success()
+		runReverter.Success()
 
 		return instanceCreateFinish(s, &req, db.InstanceArgs{Name: bInfo.Name, Project: bInfo.Project}, op)
 	}
@@ -843,7 +843,7 @@ func createFromBackup(s *state.State, r *http.Request, projectName string, data 
 		return response.InternalError(err)
 	}
 
-	revert.Success()
+	reverter.Success()
 	return operations.OperationResponse(op)
 }
 
@@ -913,15 +913,6 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Set type from URL if missing
-	urlType, err := urlInstanceTypeDetect(r)
-	if err != nil {
-		return response.InternalError(err)
-	}
-
-	if req.Type == "" && urlType != instancetype.Any {
-		req.Type = api.InstanceType(urlType.String())
-	}
-
 	if req.Type == "" {
 		req.Type = api.InstanceTypeContainer // Default to container if not specified.
 	}
@@ -944,6 +935,31 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 			if req.Config[k] == "" {
 				req.Config[k] = v
 			}
+		}
+	}
+
+	// Special handling for instance refresh.
+	// For all other situations, we're headed towards the scheduler, but for this case, we can short circuit it.
+	if s.ServerClustered && !clusterNotification && req.Source.Type == "migration" && req.Source.Refresh {
+		client, err := cluster.ConnectIfInstanceIsRemote(s, targetProjectName, req.Name, r)
+		if err != nil && !response.IsNotFoundError(err) {
+			return response.SmartError(err)
+		}
+
+		if client != nil {
+			// The request needs to be forwarded to the correct server.
+			op, err := client.CreateInstance(req)
+			if err != nil {
+				return response.SmartError(err)
+			}
+
+			opAPI := op.Get()
+			return operations.ForwardedOperationResponse(targetProjectName, &opAPI)
+		}
+
+		if err == nil {
+			// The instance is valid and the request wasn't forwarded, so the instance is local.
+			return createFromMigration(r.Context(), s, r, targetProjectName, nil, &req)
 		}
 	}
 
@@ -1329,7 +1345,7 @@ func clusterCopyContainerInternal(ctx context.Context, s *state.State, r *http.R
 		var err error
 
 		// Load source node.
-		nodeAddress, err = tx.GetNodeAddressOfInstance(ctx, source.Project().Name, source.Name(), source.Type())
+		nodeAddress, err = tx.GetNodeAddressOfInstance(ctx, source.Project().Name, source.Name())
 		if err != nil {
 			return fmt.Errorf("Failed to get address of instance's member: %w", err)
 		}

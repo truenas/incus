@@ -24,6 +24,7 @@ type Opts struct {
 	SNATV4     *SNATOpts    // Enable IPv4 SNAT with specified options. Off if not provided.
 	SNATV6     *SNATOpts    // Enable IPv6 SNAT with specified options. Off if not provided.
 	ACL        bool         // Enable ACL during setup.
+	AddressSet bool         // Enable address sets, only for netfilter.
 }
 
 // ACLRule represents an ACL rule that can be added to a firewall.
@@ -48,4 +49,28 @@ type AddressForward struct {
 	Protocol      string
 	ListenPorts   []uint64
 	TargetPorts   []uint64
+	SNAT          bool
+}
+
+// AddressSet represent an address set.
+type AddressSet struct {
+	Name      string
+	Addresses []string
+}
+
+// NftListSetsOutput structure to read JSON output of set listing.
+type NftListSetsOutput struct {
+	Nftables []NftListSetsEntry `json:"nftables"`
+}
+
+// NftListSetsEntry structure to read JSON output of nft set listing.
+type NftListSetsEntry struct {
+	Set *NftSet `json:"set,omitempty"`
+}
+
+// NftSet structure to parse the JSON of a set returned by nft -j list sets.
+type NftSet struct {
+	Family string `json:"family"`
+	Name   string `json:"name"`
+	Table  string `json:"table"`
 }

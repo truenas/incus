@@ -279,7 +279,7 @@ func incusDownloadImage(fingerprint string, uri string, userAgent string, do fun
 	}
 
 	// Hashing
-	hashSHA256 := sha256.New()
+	hash256 := sha256.New()
 
 	// Deal with split images
 	if ctype == "multipart/form-data" {
@@ -300,7 +300,7 @@ func incusDownloadImage(fingerprint string, uri string, userAgent string, do fun
 			return nil, fmt.Errorf("Invalid multipart image")
 		}
 
-		size, err := io.Copy(io.MultiWriter(req.MetaFile, hashSHA256), part)
+		size, err := io.Copy(io.MultiWriter(req.MetaFile, hash256), part)
 		if err != nil {
 			return nil, err
 		}
@@ -318,7 +318,7 @@ func incusDownloadImage(fingerprint string, uri string, userAgent string, do fun
 			return nil, fmt.Errorf("Invalid multipart image")
 		}
 
-		size, err = io.Copy(io.MultiWriter(req.RootfsFile, hashSHA256), part)
+		size, err = io.Copy(io.MultiWriter(req.RootfsFile, hash256), part)
 		if err != nil {
 			return nil, err
 		}
@@ -327,7 +327,7 @@ func incusDownloadImage(fingerprint string, uri string, userAgent string, do fun
 		resp.RootfsName = part.FileName()
 
 		// Check the hash
-		hash := fmt.Sprintf("%x", hashSHA256.Sum(nil))
+		hash := fmt.Sprintf("%x", hash256.Sum(nil))
 		if imageType != "oci" && !strings.HasPrefix(hash, fingerprint) {
 			return nil, fmt.Errorf("Image fingerprint doesn't match. Got %s expected %s", hash, fingerprint)
 		}
@@ -346,7 +346,7 @@ func incusDownloadImage(fingerprint string, uri string, userAgent string, do fun
 		return nil, fmt.Errorf("No filename in Content-Disposition header")
 	}
 
-	size, err := io.Copy(io.MultiWriter(req.MetaFile, hashSHA256), body)
+	size, err := io.Copy(io.MultiWriter(req.MetaFile, hash256), body)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +355,7 @@ func incusDownloadImage(fingerprint string, uri string, userAgent string, do fun
 	resp.MetaName = filename
 
 	// Check the hash
-	hash := fmt.Sprintf("%x", hashSHA256.Sum(nil))
+	hash := fmt.Sprintf("%x", hash256.Sum(nil))
 	if imageType != "oci" && !strings.HasPrefix(hash, fingerprint) {
 		return nil, fmt.Errorf("Image fingerprint doesn't match. Got %s expected %s", hash, fingerprint)
 	}
@@ -462,7 +462,6 @@ func (r *ProtocolIncus) CreateImage(image api.ImagesPost, args *ImageCreateArgs)
 	}
 
 	// Prepare the body
-	var ioErr error
 	var body io.Reader
 	var contentType string
 	if args.RootfsFile == nil {
@@ -609,10 +608,6 @@ func (r *ProtocolIncus) CreateImage(image api.ImagesPost, args *ImageCreateArgs)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
-
-	if ioErr != nil {
-		return nil, err
-	}
 
 	// Handle errors
 	response, _, err := incusParseResponse(resp)

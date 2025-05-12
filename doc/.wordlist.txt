@@ -3,6 +3,7 @@ AAVMF
 ABI
 ACL
 ACLs
+AI
 AIO
 allocator
 AMD
@@ -67,6 +68,7 @@ Distrobuilder
 diskful
 Diskless
 diskless
+DNAT
 DNS
 dnsmasq
 DNSSEC
@@ -89,6 +91,7 @@ ESA
 ETag
 failover
 frontend
+formatters
 FQDNs
 Furo
 gapped
@@ -148,6 +151,8 @@ Kubernetes
 KVM
 lookups
 Loongarch
+LLM
+LLMs
 LRU
 LTS
 LV
@@ -164,6 +169,7 @@ macOS
 macvlan
 Makefile
 manpages
+mDNS
 Mbit
 MiB
 Mibit
@@ -263,6 +269,7 @@ SIGTERM
 simplestreams
 SLAAC
 SMTP
+SNAT
 Snapcraft
 Solaris
 SPAs

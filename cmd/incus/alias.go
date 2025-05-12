@@ -58,6 +58,7 @@ type cmdAliasAdd struct {
 func (c *cmdAliasAdd) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("add", i18n.G("<alias> <target>"))
+	cmd.Aliases = []string{"create"}
 	cmd.Short = i18n.G("Add new aliases")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Add new aliases`))
@@ -111,7 +112,7 @@ func (c *cmdAliasList) Command() *cobra.Command {
 	cmd.Short = i18n.G("List aliases")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`List aliases`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
@@ -223,7 +224,7 @@ type cmdAliasRemove struct {
 func (c *cmdAliasRemove) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("remove", i18n.G("<alias>"))
-	cmd.Aliases = []string{"rm"}
+	cmd.Aliases = []string{"delete", "rm"}
 	cmd.Short = i18n.G("Remove aliases")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Remove aliases`))

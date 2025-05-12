@@ -30,18 +30,100 @@ func (d *nicP2P) validateConfig(instConf instance.ConfigReader) error {
 	}
 
 	optionalFields := []string{
+		// gendoc:generate(entity=devices, group=nic_p2p, key=name)
+		//
+		// ---
+		//  type: string
+		//  default: kernel assigned
+		//  shortdesc: The name of the interface inside the instance
 		"name",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=mtu)
+		//
+		// ---
+		//  type: integer
+		//  default: kernel assigned
+		//  shortdesc: The Maximum Transmit Unit (MTU) of the new interface
 		"mtu",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=queue.tx.length)
+		//
+		// ---
+		//  type: integer
+		//  shortdesc: The transmit queue length for the NIC
 		"queue.tx.length",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=hwaddr)
+		//
+		// ---
+		//  type: string
+		//  default: randomly assigned
+		//  shortdesc: The MAC address of the new interface
 		"hwaddr",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=host_name)
+		//
+		// ---
+		//  type: string
+		//  default: randomly assigned
+		//  shortdesc: The name of the interface on the host
 		"host_name",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=limits.ingress)
+		//
+		// ---
+		//  type: string
+		//  shortdesc: I/O limit in bit/s for incoming traffic (various suffixes supported, see {ref}instances-limit-units)
 		"limits.ingress",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=limits.egress)
+		//
+		// ---
+		//  type: string
+		//  shortdesc: I/O limit in bit/s for outgoing traffic (various suffixes supported, see {ref}instances-limit-units)
 		"limits.egress",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=limits.max)
+		//
+		// ---
+		//  type: string
+		//  shortdesc: I/O limit in bit/s for both incoming and outgoing traffic (same as setting both limits.ingress and limits.egress)
 		"limits.max",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=limits.priority)
+		//
+		// ---
+		//  type: integer
+		//  shortdesc: The priority for outgoing traffic, to be used by the kernel queuing discipline to prioritize network packets
 		"limits.priority",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=ipv4.routes)
+		//
+		// ---
+		//  type: string
+		//  shortdesc: Comma-delimited list of IPv4 static routes to add on host to NIC
 		"ipv4.routes",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=ipv6.routes)
+		//
+		// ---
+		//  type: string
+		//  shortdesc: Comma-delimited list of IPv6 static routes to add on host to NIC
 		"ipv6.routes",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=boot.priotiry)
+		//
+		// ---
+		//  type: integer
+		//  shortdesc: Boot priority for VMs (higher value boots first)
 		"boot.priority",
+
+		// gendoc:generate(entity=devices, group=nic_p2p, key=io.bus)
+		//
+		// ---
+		//  type: string
+		//  default: `virtio`
+		//  shortdesc: Override the bus for the device (can be `virtio` or `usb`) (VM only)
 		"io.bus",
 	}
 
@@ -80,8 +162,8 @@ func (d *nicP2P) Start() (*deviceConfig.RunConfig, error) {
 		return nil, err
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	saveData := make(map[string]string)
 	saveData["host_name"] = d.config["host_name"]
@@ -115,7 +197,7 @@ func (d *nicP2P) Start() (*deviceConfig.RunConfig, error) {
 		return nil, err
 	}
 
-	revert.Add(func() { _ = network.InterfaceRemove(saveData["host_name"]) })
+	reverter.Add(func() { _ = network.InterfaceRemove(saveData["host_name"]) })
 
 	// Attempt to disable router advertisement acceptance.
 	err = localUtil.SysctlSet(fmt.Sprintf("net/ipv6/conf/%s/accept_ra", saveData["host_name"]), "0")
@@ -164,7 +246,8 @@ func (d *nicP2P) Start() (*deviceConfig.RunConfig, error) {
 			}...)
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return &runConf, nil
 }
 

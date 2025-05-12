@@ -25,7 +25,7 @@ Complete the following steps to create a standalone OVN network that is connecte
 
 1. Create an instance that uses the `ovntest` network:
 
-       incus init images:ubuntu/22.04 c1
+       incus init images:debian/12 c1
        incus config device override c1 eth0 network=ovntest
        incus start c1
 
@@ -164,10 +164,10 @@ In addition, you can add any number of servers to the Incus cluster that run onl
 
 1. To test the OVN network, create some instances and check the network connectivity:
 
-       incus launch images:ubuntu/22.04 c1 --network my-ovn
-       incus launch images:ubuntu/22.04 c2 --network my-ovn
-       incus launch images:ubuntu/22.04 c3 --network my-ovn
-       incus launch images:ubuntu/22.04 c4 --network my-ovn
+       incus launch images:debian/12 c1 --network my-ovn
+       incus launch images:debian/12 c2 --network my-ovn
+       incus launch images:debian/12 c3 --network my-ovn
+       incus launch images:debian/12 c4 --network my-ovn
        incus list
        incus exec c4 -- bash
        ping <IP of c1>
@@ -198,9 +198,9 @@ You can now use [`incus monitor`](incus_monitor.md) to see logged network ACL tr
     incus monitor --type=network-acls
 
 You can also send the logs to Loki.
-To do so, add the `network-acl` value to the {config:option}`server-loki:loki.types` configuration key, for example:
+To do so, add the `network-acl` value to the {config:option}`server-logging:logging.NAME.types` configuration key, for example:
 
-    incus config set loki.types=network-acl
+    incus config set logging.NAME.types=network-acl
 
 ```{tip}
 You can include logs for OVN `northd`, OVN north-bound `ovsdb-server`, and OVN south-bound `ovsdb-server` as well.

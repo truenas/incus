@@ -301,6 +301,7 @@ if [ "${1:-"all"}" != "cluster" ]; then
     run_test test_image_import_dir "import image from directory"
     run_test test_image_import_with_reuse "import image with reuse flag"
     run_test test_image_refresh "image refresh"
+    run_test test_image_split "image split"
     run_test test_image_acl "image acl"
     run_test test_cloud_init "cloud-init"
     run_test test_exec "exec"
@@ -323,6 +324,7 @@ if [ "${1:-"all"}" != "cluster" ]; then
     run_test test_network "network management"
     #run_test test_network_dhcp_routes "network dhcp routes" #!TN
     run_test test_network_acl "network ACL management"
+    run_test test_address_set "network address set"
     run_test test_network_forward "network address forwards"
     run_test test_network_zone "network DNS zones"
     run_test test_idmap "id mapping"

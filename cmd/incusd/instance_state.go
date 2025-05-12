@@ -68,11 +68,6 @@ import (
 func instanceState(d *Daemon, r *http.Request) response.Response {
 	s := d.State()
 
-	instanceType, err := urlInstanceTypeDetect(r)
-	if err != nil {
-		return response.SmartError(err)
-	}
-
 	projectName := request.ProjectParam(r)
 	name, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {
@@ -84,7 +79,7 @@ func instanceState(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Handle requests targeted to a container on a different node
-	resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, name, instanceType)
+	resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, name)
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -142,11 +137,6 @@ func instanceState(d *Daemon, r *http.Request) response.Response {
 func instanceStatePut(d *Daemon, r *http.Request) response.Response {
 	s := d.State()
 
-	instanceType, err := urlInstanceTypeDetect(r)
-	if err != nil {
-		return response.SmartError(err)
-	}
-
 	projectName := request.ProjectParam(r)
 	name, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {
@@ -158,7 +148,7 @@ func instanceStatePut(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Handle requests targeted to a container on a different node
-	resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, name, instanceType)
+	resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, name)
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -190,7 +180,7 @@ func instanceStatePut(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Actually perform the change.
-	opType, err := instanceActionToOptype(req.Action)
+	opType, err := instanceActionToOpType(req.Action)
 	if err != nil {
 		return response.BadRequest(err)
 	}
@@ -211,7 +201,7 @@ func instanceStatePut(d *Daemon, r *http.Request) response.Response {
 	return operations.OperationResponse(op)
 }
 
-func instanceActionToOptype(action string) (operationtype.Type, error) {
+func instanceActionToOpType(action string) (operationtype.Type, error) {
 	switch internalInstance.InstanceAction(action) {
 	case internalInstance.Start:
 		return operationtype.InstanceStart, nil
@@ -223,9 +213,9 @@ func instanceActionToOptype(action string) (operationtype.Type, error) {
 		return operationtype.InstanceFreeze, nil
 	case internalInstance.Unfreeze:
 		return operationtype.InstanceUnfreeze, nil
+	default:
+		return operationtype.Unknown, fmt.Errorf("Unknown action: '%s'", action)
 	}
-
-	return operationtype.Unknown, fmt.Errorf("Unknown action: '%s'", action)
 }
 
 func doInstanceStatePut(inst instance.Instance, req api.InstanceStatePut) error {

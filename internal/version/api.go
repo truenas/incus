@@ -476,6 +476,14 @@ var APIExtensions = []string{
 	"disk_io_bus_usb",
 	"storage_driver_linstor",
 	"instance_oci_entrypoint",
+	"network_address_set",
+	"server_logging",
+	"network_forward_snat",
+	"memory_hotplug",
+	"instance_nic_routed_host_tables",
+	"instance_publish_split",
+	"init_preseed_certificates",
+	"custom_volume_sftp",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

@@ -49,7 +49,7 @@ func (c *cmdAdminInit) Command() *cobra.Command {
   init --auto [--network-address=IP] [--network-port=8443] [--storage-backend=dir]
               [--storage-create-device=DEVICE] [--storage-create-loop=SIZE]
               [--storage-pool=POOL]
-  init --preseed
+  init --preseed [preseed.yaml]
   init --dump
 `
 	cmd.RunE = c.Run
@@ -69,7 +69,7 @@ func (c *cmdAdminInit) Command() *cobra.Command {
 }
 
 // Run runs the actual command logic.
-func (c *cmdAdminInit) Run(cmd *cobra.Command, _ []string) error {
+func (c *cmdAdminInit) Run(cmd *cobra.Command, args []string) error {
 	// Quick checks.
 	if c.flagAuto && c.flagPreseed {
 		return errors.New(i18n.G("Can't use --auto and --preseed together"))
@@ -121,24 +121,20 @@ func (c *cmdAdminInit) Run(cmd *cobra.Command, _ []string) error {
 	// Prepare the input data
 	var config *api.InitPreseed
 
-	// Preseed mode
-	if c.flagPreseed {
-		config, err = c.RunPreseed()
+	switch {
+	case c.flagPreseed:
+		config, err = c.RunPreseed(cmd, args)
 		if err != nil {
 			return err
 		}
-	}
 
-	// Auto mode
-	if c.flagAuto || c.flagMinimal {
+	case c.flagAuto || c.flagMinimal:
 		config, err = c.RunAuto(d, server)
 		if err != nil {
 			return err
 		}
-	}
 
-	// Interactive mode
-	if !c.flagAuto && !c.flagMinimal && !c.flagPreseed {
+	default:
 		config, err = c.RunInteractive(cmd, d, server)
 		if err != nil {
 			return err

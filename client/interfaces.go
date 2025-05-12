@@ -89,6 +89,7 @@ type InstanceServer interface {
 	// Certificate functions
 	GetCertificateFingerprints() (fingerprints []string, err error)
 	GetCertificates() (certificates []api.Certificate, err error)
+	GetCertificatesWithFilter(filters []string) ([]api.Certificate, error)
 	GetCertificate(fingerprint string) (certificate *api.Certificate, ETag string, err error)
 	CreateCertificate(certificate api.CertificatesPost) (err error)
 	UpdateCertificate(fingerprint string, certificate api.CertificatePut, ETag string) (err error)
@@ -194,7 +195,9 @@ type InstanceServer interface {
 	// Network functions ("network" API extension)
 	GetNetworkNames() (names []string, err error)
 	GetNetworks() (networks []api.Network, err error)
+	GetNetworksWithFilter(filters []string) (networks []api.Network, err error)
 	GetNetworksAllProjects() (networks []api.Network, err error)
+	GetNetworksAllProjectsWithFilter(filters []string) (networks []api.Network, err error)
 	GetNetwork(name string) (network *api.Network, ETag string, err error)
 	GetNetworkLeases(name string) (leases []api.NetworkLease, err error)
 	GetNetworkState(name string) (state *api.NetworkState, err error)
@@ -239,6 +242,16 @@ type InstanceServer interface {
 	RenameNetworkACL(name string, acl api.NetworkACLPost) (err error)
 	DeleteNetworkACL(name string) (err error)
 
+	// Network address set functions ("network_address_set" API extension)
+	GetNetworkAddressSetNames() (names []string, err error)
+	GetNetworkAddressSets() (AddressSets []api.NetworkAddressSet, err error)
+	GetNetworkAddressSetsAllProjects() (AddressSets []api.NetworkAddressSet, err error)
+	GetNetworkAddressSet(name string) (AddressSet *api.NetworkAddressSet, ETag string, err error)
+	CreateNetworkAddressSet(AddressSet api.NetworkAddressSetsPost) (err error)
+	UpdateNetworkAddressSet(name string, AddressSet api.NetworkAddressSetPut, ETag string) (err error)
+	RenameNetworkAddressSet(name string, AddressSet api.NetworkAddressSetPost) (err error)
+	DeleteNetworkAddressSet(name string) (err error)
+
 	// Network allocations functions ("network_allocations" API extension)
 	GetNetworkAllocations() (allocations []api.NetworkAllocations, err error)
 	GetNetworkAllocationsAllProjects() (allocations []api.NetworkAllocations, err error)
@@ -280,8 +293,10 @@ type InstanceServer interface {
 
 	// Profile functions
 	GetProfilesAllProjects() (profiles []api.Profile, err error)
+	GetProfilesAllProjectsWithFilter(filters []string) ([]api.Profile, error)
 	GetProfileNames() (names []string, err error)
 	GetProfiles() (profiles []api.Profile, err error)
+	GetProfilesWithFilter(filters []string) ([]api.Profile, error)
 	GetProfile(name string) (profile *api.Profile, ETag string, err error)
 	CreateProfile(profile api.ProfilesPost) (err error)
 	UpdateProfile(name string, profile api.ProfilePut, ETag string) (err error)
@@ -291,6 +306,7 @@ type InstanceServer interface {
 	// Project functions
 	GetProjectNames() (names []string, err error)
 	GetProjects() (projects []api.Project, err error)
+	GetProjectsWithFilter(filters []string) (projects []api.Project, err error)
 	GetProject(name string) (project *api.Project, ETag string, err error)
 	GetProjectState(name string) (project *api.ProjectState, err error)
 	GetProjectAccess(name string) (access api.Access, err error)
@@ -312,7 +328,9 @@ type InstanceServer interface {
 	// Storage bucket functions ("storage_buckets" API extension)
 	GetStoragePoolBucketNames(poolName string) ([]string, error)
 	GetStoragePoolBucketsAllProjects(poolName string) ([]api.StorageBucket, error)
+	GetStoragePoolBucketsWithFilterAllProjects(poolName string, filters []string) (bucket []api.StorageBucket, err error)
 	GetStoragePoolBuckets(poolName string) ([]api.StorageBucket, error)
+	GetStoragePoolBucketsWithFilter(poolName string, filters []string) (bucket []api.StorageBucket, err error)
 	GetStoragePoolBucket(poolName string, bucketName string) (bucket *api.StorageBucket, ETag string, err error)
 	CreateStoragePoolBucket(poolName string, bucket api.StorageBucketsPost) (*api.StorageBucketKey, error)
 	UpdateStoragePoolBucket(poolName string, bucketName string, bucket api.StorageBucketPut, ETag string) (err error)
@@ -368,6 +386,11 @@ type InstanceServer interface {
 
 	// Storage volume ISO import function ("custom_volume_iso" API extension)
 	CreateStoragePoolVolumeFromISO(pool string, args StorageVolumeBackupArgs) (op Operation, err error)
+	CreateStoragePoolVolumeFromMigration(pool string, volume api.StorageVolumesPost) (op Operation, err error)
+
+	// Storage volume SFTP functions ("custom_volume_sftp" API extension)
+	GetStoragePoolVolumeFileSFTPConn(pool string, volType string, volName string) (net.Conn, error)
+	GetStoragePoolVolumeFileSFTP(pool string, volType string, volName string) (*sftp.Client, error)
 
 	// Cluster functions ("cluster" API extensions)
 	GetCluster() (cluster *api.Cluster, ETag string, err error)

@@ -150,11 +150,6 @@ func deviceNetlinkListener() (chan []string, chan device.USBEvent, chan device.U
 					continue
 				}
 
-				serial, ok := props["SERIAL"]
-				if !ok {
-					continue
-				}
-
 				major, ok := props["MAJOR"]
 				if !ok {
 					continue
@@ -192,7 +187,7 @@ func deviceNetlinkListener() (chan []string, chan device.USBEvent, chan device.U
 					 */
 					zeroPad(parts[0], 4),
 					zeroPad(parts[1], 4),
-					serial,
+					props["SERIAL"],
 					major,
 					minor,
 					busnum,
@@ -383,7 +378,7 @@ func fillFixedInstances(fixedInstances map[int64][]instance.Instance, inst insta
 //
 // Overall, this function ensures that the CPU resources of the host are utilized effectively amongst all the containers running on it.
 func deviceTaskBalance(s *state.State) {
-	min := func(x, y int) int {
+	minFunc := func(x, y int) int {
 		if x < y {
 			return x
 		}
@@ -515,7 +510,7 @@ func deviceTaskBalance(s *state.State) {
 		count, err := strconv.Atoi(cpulimit)
 		if err == nil {
 			// Load-balance
-			count = min(count, len(cpus))
+			count = minFunc(count, len(cpus))
 			if len(numaCpus) > 0 {
 				fillFixedInstances(fixedInstances, c, cpus, numaCpus, count, true)
 			} else {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -104,6 +105,7 @@ type cmdProjectCreate struct {
 func (c *cmdProjectCreate) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("create", i18n.G("[<remote>:]<project>"))
+	cmd.Aliases = []string{"add"}
 	cmd.Short = i18n.G("Create projects")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Create projects`))
@@ -209,7 +211,7 @@ type cmdProjectDelete struct {
 func (c *cmdProjectDelete) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("delete", i18n.G("[<remote>:]<project>"))
-	cmd.Aliases = []string{"rm"}
+	cmd.Aliases = []string{"rm", "remove"}
 	cmd.Short = i18n.G("Delete projects")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Delete projects`))
@@ -523,7 +525,7 @@ type cmdProjectList struct {
 // Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdProjectList) Command() *cobra.Command {
 	cmd := &cobra.Command{}
-	cmd.Use = usage("list", i18n.G("[<remote>:]"))
+	cmd.Use = usage("list", i18n.G("[<remote>:] [<filter>...]"))
 	cmd.Aliases = []string{"ls"}
 	cmd.Short = i18n.G("List projects")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
@@ -547,7 +549,7 @@ u - Used By`))
 
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultProjectColumns, i18n.G("Columns")+"``")
 
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
@@ -692,8 +694,16 @@ func (c *cmdProjectList) Run(cmd *cobra.Command, args []string) error {
 
 	resource := resources[0]
 
+	// Process the filters
+	filters := []string{}
+	if len(args) > 1 {
+		filters = append(filters, args[1:]...)
+	}
+
+	filters = prepareProjectServerFilters(filters, api.Project{})
+
 	// List projects
-	projects, err := resource.server.GetProjects()
+	projects, err := resource.server.GetProjectsWithFilter(filters)
 	if err != nil {
 		return err
 	}
@@ -1086,7 +1096,7 @@ func (c *cmdProjectInfo) Command() *cobra.Command {
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Get a summary of resource allocations`))
 	cmd.Flags().BoolVar(&c.flagShowAccess, "show-access", false, i18n.G("Show the instance's access list"))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
@@ -1230,4 +1240,37 @@ func (c *cmdProjectGetCurrent) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// prepareProjectServerFilter processes and formats filter criteria
+// for projects, ensuring they are in a format that the server can interpret.
+func prepareProjectServerFilters(filters []string, i any) []string {
+	formattedFilters := []string{}
+
+	for _, filter := range filters {
+		membs := strings.SplitN(filter, "=", 2)
+		key := membs[0]
+
+		if len(membs) == 1 {
+			regexpValue := key
+			if !strings.Contains(key, "^") && !strings.Contains(key, "$") {
+				regexpValue = "^" + regexpValue + "$"
+			}
+
+			filter = fmt.Sprintf("name=(%s|^%s.*)", regexpValue, key)
+		} else {
+			firstPart := key
+			if strings.Contains(key, ".") {
+				firstPart = strings.Split(key, ".")[0]
+			}
+
+			if !structHasField(reflect.TypeOf(i), firstPart) {
+				filter = fmt.Sprintf("config.%s", filter)
+			}
+		}
+
+		formattedFilters = append(formattedFilters, filter)
+	}
+
+	return formattedFilters
 }

@@ -94,6 +94,7 @@ ifneq "$(INCUS_OFFLINE)" ""
 	exit 1
 endif
 	$(GO) get -t -v -u ./...
+	$(GO) get github.com/go-jose/go-jose/v4@v4.0.5
 	$(GO) mod tidy --go=1.23.7
 	$(GO) get toolchain@none
 
@@ -295,6 +296,9 @@ build-mo: $(MOFILES)
 static-analysis:
 ifeq ($(shell command -v go-licenses),)
 	(cd / ; $(GO) install -v -x github.com/google/go-licenses@latest)
+endif
+ifeq ($(shell command -v govulncheck),)
+	go install golang.org/x/vuln/cmd/govulncheck@latest
 endif
 ifeq ($(shell command -v golangci-lint),)
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$($(GO) env GOPATH)/bin

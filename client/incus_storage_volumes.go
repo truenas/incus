@@ -3,9 +3,12 @@ package incus
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/pkg/sftp"
 
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/cancel"
@@ -990,6 +993,19 @@ func (r *ProtocolIncus) GetStorageVolumeBackupFile(pool string, volName string, 
 	return &resp, nil
 }
 
+// CreateStoragePoolVolumeFromMigration defines a new storage volume.
+// In contrast to CreateStoragePoolVolume, it also returns an operation object.
+func (r *ProtocolIncus) CreateStoragePoolVolumeFromMigration(pool string, volume api.StorageVolumesPost) (Operation, error) {
+	// Send the request
+	path := fmt.Sprintf("/storage-pools/%s/volumes/%s", url.PathEscape(pool), url.PathEscape(volume.Type))
+	op, _, err := r.queryOperation("POST", path, volume, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
+
 // CreateStoragePoolVolumeFromISO creates a custom volume from an ISO file.
 func (r *ProtocolIncus) CreateStoragePoolVolumeFromISO(pool string, args StorageVolumeBackupArgs) (Operation, error) {
 	err := r.CheckExtension("custom_volume_iso")
@@ -1105,4 +1121,45 @@ func (r *ProtocolIncus) CreateStoragePoolVolumeFromBackup(pool string, args Stor
 	}
 
 	return &op, nil
+}
+
+// GetStoragePoolVolumeFileSFTPConn returns a connection to the volume's SFTP endpoint.
+func (r *ProtocolIncus) GetStoragePoolVolumeFileSFTPConn(pool string, volType string, volName string) (net.Conn, error) {
+	if !r.HasExtension("custom_volume_sftp") {
+		return nil, fmt.Errorf(`The server is missing the required "custom_volume_sftp" API extension`)
+	}
+
+	u := api.NewURL()
+	u.URL = r.httpBaseURL // Preload the URL with the client base URL.
+	u.Path("1.0", "storage-pools", pool, "volumes", volType, volName, "sftp")
+	r.setURLQueryAttributes(&u.URL)
+
+	return r.rawSFTPConn(&u.URL)
+}
+
+// GetStoragePoolVolumeFileSFTP returns an SFTP connection to the volume.
+func (r *ProtocolIncus) GetStoragePoolVolumeFileSFTP(pool string, volType string, volName string) (*sftp.Client, error) {
+	if !r.HasExtension("custom_volume_sftp") {
+		return nil, fmt.Errorf(`The server is missing the required "custom_volume_sftp" API extension`)
+	}
+
+	conn, err := r.GetStoragePoolVolumeFileSFTPConn(pool, volType, volName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get a SFTP client.
+	client, err := sftp.NewClientPipe(conn, conn, sftp.MaxPacketUnchecked(128*1024))
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+
+	go func() {
+		// Wait for the client to be done before closing the connection.
+		_ = client.Wait()
+		_ = conn.Close()
+	}()
+
+	return client, nil
 }
