@@ -242,7 +242,6 @@ test_basic_usage() {
   ! incus init testimage aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || false
 
   # Test snapshot publish
-  echo "==> Test snapshot publish"
   incus snapshot create bar
   incus publish bar/snap0 --alias foo
   incus init foo bar2
