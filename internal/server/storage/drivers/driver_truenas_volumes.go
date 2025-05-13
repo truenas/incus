@@ -745,8 +745,8 @@ func (d *truenas) deleteVolume(vol Volume, op *operations.Operation) error {
 	}
 
 	if exists {
-		// It is possible the vol is activated, and it must be deactivated to safely delete
-		_, _ = d.deactivateVolume(vol)
+		// Deleted volumes do not need shares
+		_ = d.deleteIscsiShare(dataset) // will implicitly deactivate, if activated.
 
 		// Handle clones.
 		clones, err := d.getClones(dataset)
@@ -755,10 +755,6 @@ func (d *truenas) deleteVolume(vol Volume, op *operations.Operation) error {
 		}
 
 		if len(clones) > 0 {
-			// Deleted volumes do not need shares
-			//_ = d.deleteNfsShare(dataset)
-			_ = d.deleteIscsiShare(dataset)
-
 			// Move to the deleted path.
 			err := d.renameDataset(dataset, d.dataset(vol, true), false)
 			if err != nil {
