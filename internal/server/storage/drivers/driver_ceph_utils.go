@@ -1319,7 +1319,7 @@ func (d *ceph) resizeVolume(vol Volume, sizeBytes int64, allowShrink bool) error
 	}
 
 	if allowShrink {
-		args = append(args, "--allow-shrink")
+		//args = append(args, "--allow-shrink")
 	}
 
 	args = append(args,
