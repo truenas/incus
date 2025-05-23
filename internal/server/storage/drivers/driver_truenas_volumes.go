@@ -57,61 +57,59 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		if exists {
 			canRestore := true
 
-			if vol.IsBlockBacked() && (vol.contentType == ContentTypeBlock || d.isBlockBacked(vol)) {
-				// For block volumes check if the cached image volume is larger than the current pool volume.size
-				// setting (if so we won't be able to resize the snapshot to that the smaller size later).
-				volSize, err := d.getDatasetProperty(dataset, "volsize")
+			//check if the cached image volume is larger than the current pool volume.size setting (if so we won't be
+			// able to resize the snapshot to that the smaller size later).
+			volSize, err := d.getDatasetProperty(dataset, "volsize")
+			if err != nil {
+				return err
+			}
+
+			volSizeBytes, err := strconv.ParseInt(volSize, 10, 64)
+			if err != nil {
+				return err
+			}
+
+			poolVolSize := DefaultBlockSize
+			if vol.poolConfig["volume.size"] != "" {
+				poolVolSize = vol.poolConfig["volume.size"]
+			}
+
+			poolVolSizeBytes, err := units.ParseByteSizeString(poolVolSize)
+			if err != nil {
+				return err
+			}
+
+			// Round to block boundary.
+			poolVolSizeBytes, err = d.roundVolumeBlockSizeBytes(vol, poolVolSizeBytes)
+			if err != nil {
+				return err
+			}
+
+			// If the cached volume size is different than the pool volume size, then we can't use the
+			// deleted cached image volume and instead we will rename it to a random UUID so it can't
+			// be restored in the future and a new cached image volume will be created instead.
+			if volSizeBytes != poolVolSizeBytes {
+				d.logger.Debug("Renaming deleted cached image volume so that regeneration is used", logger.Ctx{"fingerprint": vol.Name()})
+				randomVol := NewVolume(d, d.name, vol.volType, vol.contentType, d.randomVolumeName(vol), vol.config, vol.poolConfig)
+
+				_, err := d.runTool("dataset", "rename", dataset, d.dataset(randomVol, true))
 				if err != nil {
 					return err
 				}
 
-				volSizeBytes, err := strconv.ParseInt(volSize, 10, 64)
-				if err != nil {
-					return err
-				}
+				if vol.IsVMBlock() {
+					fsVol := vol.NewVMBlockFilesystemVolume()
+					randomFsVol := randomVol.NewVMBlockFilesystemVolume()
 
-				poolVolSize := DefaultBlockSize
-				if vol.poolConfig["volume.size"] != "" {
-					poolVolSize = vol.poolConfig["volume.size"]
-				}
-
-				poolVolSizeBytes, err := units.ParseByteSizeString(poolVolSize)
-				if err != nil {
-					return err
-				}
-
-				// Round to block boundary.
-				poolVolSizeBytes, err = d.roundVolumeBlockSizeBytes(vol, poolVolSizeBytes)
-				if err != nil {
-					return err
-				}
-
-				// If the cached volume size is different than the pool volume size, then we can't use the
-				// deleted cached image volume and instead we will rename it to a random UUID so it can't
-				// be restored in the future and a new cached image volume will be created instead.
-				if volSizeBytes != poolVolSizeBytes {
-					d.logger.Debug("Renaming deleted cached image volume so that regeneration is used", logger.Ctx{"fingerprint": vol.Name()})
-					randomVol := NewVolume(d, d.name, vol.volType, vol.contentType, d.randomVolumeName(vol), vol.config, vol.poolConfig)
-
-					_, err := d.runTool("dataset", "rename", d.dataset(vol, true), d.dataset(randomVol, true))
+					_, err := d.runTool("dataset", "rename", d.dataset(fsVol, true), d.dataset(randomFsVol, true))
 					if err != nil {
 						return err
 					}
-
-					if vol.IsVMBlock() {
-						fsVol := vol.NewVMBlockFilesystemVolume()
-						randomFsVol := randomVol.NewVMBlockFilesystemVolume()
-
-						_, err := d.runTool("dataset", "rename", d.dataset(fsVol, true), d.dataset(randomFsVol, true))
-						if err != nil {
-							return err
-						}
-					}
-
-					// We have renamed the deleted cached image volume, so we don't want to try and
-					// restore it.
-					canRestore = false
 				}
+
+				// We have renamed the deleted cached image volume, so we don't want to try and
+				// restore it.
+				canRestore = false
 			}
 
 			// Restore the image.
@@ -142,100 +140,77 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		}
 	}
 
-	if vol.contentType == ContentTypeFS && !d.isBlockBacked(vol) {
-		// Create the filesystem dataset.
-		err := d.createDataset(d.dataset(vol, false), "mountpoint=legacy", "canmount=noauto")
+	var opts []string
+
+	// Add custom property incus:content_type which allows distinguishing between regular volumes, block_mode enabled volumes, and ISO volumes.
+	if vol.volType == VolumeTypeCustom {
+		opts = append(opts, fmt.Sprintf("user-props=incus:content_type=%s", vol.contentType))
+	}
+
+	blockSize := vol.ExpandedConfig("truenas.blocksize")
+	if blockSize != "" {
+		// Convert to bytes.
+		sizeBytes, err := units.ParseByteSizeString(blockSize)
 		if err != nil {
 			return err
 		}
 
-		// After this point we have a filesystem, so setup reverter.
-		reverter.Add(func() { _ = d.DeleteVolume(vol, op) })
+		// truenas.blocksize can have value in range from 512 to 16MiB because it's used for volblocksize and recordsize
+		// volblocksize maximum value is 128KiB so if the value of truenas.blocksize is bigger set it to 128KiB.
+		if sizeBytes > zfsMaxVolBlocksize {
+			sizeBytes = zfsMaxVolBlocksize
+		}
 
-		// Apply the size limit.
-		err = d.SetVolumeQuota(vol, vol.ConfigSize(), false, op)
+		opts = append(opts, fmt.Sprintf("volblocksize=%d", sizeBytes))
+	}
+
+	sizeBytes, err := units.ParseByteSizeString(vol.ConfigSize())
+	if err != nil {
+		return err
+	}
+
+	sizeBytes, err = d.roundVolumeBlockSizeBytes(vol, sizeBytes)
+	if err != nil {
+		return err
+	}
+
+	dataset := d.dataset(vol, false)
+
+	// Create the volume dataset.
+	err = d.createVolume(dataset, sizeBytes, opts...)
+	if err != nil {
+		return err
+	}
+
+	// After this point we'll have a volume, so setup reverter.
+	reverter.Add(func() { _ = d.DeleteVolume(vol, op) })
+
+	err = d.createIscsiShare(dataset, false)
+	if err != nil {
+		return err
+	}
+
+	if vol.contentType == ContentTypeFS {
+
+		// activateIscsiDataset does not check if the dataset has been activated.
+		devPath, err := d.activateIscsiDataset(dataset)
 		if err != nil {
 			return err
 		}
 
-		// Apply the blocksize.
-		err = d.setBlocksizeFromConfig(vol)
-		if err != nil {
-			return err
-		}
-	} else {
-		var opts []string
+		fsVolFilesystem := vol.ConfigBlockFilesystem()
 
-		// Add custom property incus:content_type which allows distinguishing between regular volumes, block_mode enabled volumes, and ISO volumes.
-		if vol.volType == VolumeTypeCustom {
-			opts = append(opts, fmt.Sprintf("user-props=incus:content_type=%s", vol.contentType))
-		}
+		_, err = makeFSType(devPath, fsVolFilesystem, nil)
 
-		blockSize := vol.ExpandedConfig("truenas.blocksize")
-		if blockSize != "" {
-			// Convert to bytes.
-			sizeBytes, err := units.ParseByteSizeString(blockSize)
-			if err != nil {
-				return err
-			}
+		// de-activate even if there is an err
+		err2 := d.deactivateIscsiDataset(dataset)
 
-			// truenas.blocksize can have value in range from 512 to 16MiB because it's used for volblocksize and recordsize
-			// volblocksize maximum value is 128KiB so if the value of truenas.blocksize is bigger set it to 128KiB.
-			if sizeBytes > zfsMaxVolBlocksize {
-				sizeBytes = zfsMaxVolBlocksize
-			}
-
-			opts = append(opts, fmt.Sprintf("volblocksize=%d", sizeBytes))
-		}
-
-		sizeBytes, err := units.ParseByteSizeString(vol.ConfigSize())
 		if err != nil {
 			return err
 		}
 
-		sizeBytes, err = d.roundVolumeBlockSizeBytes(vol, sizeBytes)
-		if err != nil {
-			return err
-		}
-
-		dataset := d.dataset(vol, false)
-
-		// Create the volume dataset.
-		err = d.createVolume(dataset, sizeBytes, opts...)
-		if err != nil {
-			return err
-		}
-
-		// After this point we'll have a volume, so setup reverter.
-		reverter.Add(func() { _ = d.DeleteVolume(vol, op) })
-
-		err = d.createIscsiShare(dataset, false)
-		if err != nil {
-			return err
-		}
-
-		if vol.contentType == ContentTypeFS {
-
-			// activateIscsiDataset does not check if the dataset has been activated.
-			devPath, err := d.activateIscsiDataset(dataset)
-			if err != nil {
-				return err
-			}
-
-			fsVolFilesystem := vol.ConfigBlockFilesystem()
-
-			_, err = makeFSType(devPath, fsVolFilesystem, nil)
-
-			// de-activate even if there is an err
-			err2 := d.deactivateIscsiDataset(dataset)
-
-			if err != nil {
-				return err
-			}
-
-			if err2 != nil {
-				return err2
-			}
+		if err2 != nil {
+			return err2
 		}
 	}
 
@@ -250,7 +225,7 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		reverter.Add(func() { _ = d.DeleteVolume(fsVol, op) })
 	}
 
-	err := vol.MountTask(func(mountPath string, op *operations.Operation) error {
+	err = vol.MountTask(func(mountPath string, op *operations.Operation) error {
 		// Run the volume filler function if supplied.
 		if filler != nil && filler.Fill != nil {
 			var err error
@@ -335,7 +310,6 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 				return err
 			}
 		}
-
 	}
 
 	// All done.
@@ -521,16 +495,8 @@ func (d *truenas) createOrRefeshVolumeFromCopy(vol Volume, srcVol Volume, refres
 
 	// Apply the properties.
 	if vol.contentType == ContentTypeFS {
-		if !d.isBlockBacked(srcVol) {
 
-			// Apply the blocksize.
-			err = d.setBlocksizeFromConfig(vol)
-			if err != nil {
-				return err
-			}
-		}
-
-		if d.isBlockBacked(srcVol) && renegerateFilesystemUUIDNeeded(vol.ConfigBlockFilesystem()) {
+		if renegerateFilesystemUUIDNeeded(vol.ConfigBlockFilesystem()) {
 
 			// regen must be done with vol unmounted.
 
@@ -560,7 +526,7 @@ func (d *truenas) createOrRefeshVolumeFromCopy(vol Volume, srcVol Volume, refres
 	// leaving the filesystem in an inconsistent state if the resize couldn't be completed. This is because if
 	// the resize fails we will delete the volume anyway so don't have to worry about it being inconsistent.
 	var allowUnsafeResize bool
-	if d.isBlockBacked(vol) && vol.contentType == ContentTypeFS {
+	if vol.contentType == ContentTypeFS {
 		allowUnsafeResize = true
 	}
 
@@ -933,136 +899,130 @@ func (d *truenas) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 	inUse := vol.MountInUse()
 	dataset := d.dataset(vol, false)
 
-	// Handle volume datasets.
-	if d.isBlockBacked(vol) && vol.contentType == ContentTypeFS || IsContentBlock(vol.contentType) {
-		// Do nothing if size isn't specified.
-		if sizeBytes <= 0 {
-			return nil
-		}
+	// always zvols with blockbacking.
 
-		sizeBytes, err = d.roundVolumeBlockSizeBytes(vol, sizeBytes)
-		if err != nil {
-			return err
-		}
-
-		oldSizeBytesStr, err := d.getDatasetProperty(dataset, "volsize")
-		if err != nil {
-			return err
-		}
-
-		oldVolSizeBytesInt, err := strconv.ParseInt(oldSizeBytesStr, 10, 64)
-		if err != nil {
-			return err
-		}
-
-		oldVolSizeBytes := int64(oldVolSizeBytesInt)
-
-		if oldVolSizeBytes == sizeBytes {
-			return nil
-		}
-
-		if vol.contentType == ContentTypeFS {
-			// Activate volume if needed.
-			activated, volDevPath, err := d.activateVolume(vol)
-			if err != nil {
-				return err
-			}
-
-			if activated {
-				defer func() { _, _ = d.deactivateVolume(vol) }()
-			}
-
-			if vol.volType == VolumeTypeImage {
-				return fmt.Errorf("Image volumes cannot be resized: %w", ErrCannotBeShrunk)
-			}
-
-			fsType := vol.ConfigBlockFilesystem()
-
-			l := d.logger.AddContext(logger.Ctx{"dev": volDevPath, "size": fmt.Sprintf("%db", sizeBytes)})
-
-			if sizeBytes < oldVolSizeBytes {
-				if !filesystemTypeCanBeShrunk(fsType) {
-					return fmt.Errorf("Filesystem %q cannot be shrunk: %w", fsType, ErrCannotBeShrunk)
-				}
-
-				if inUse {
-					return ErrInUse // We don't allow online shrinking of filesystem block volumes.
-				}
-
-				// Shrink filesystem first.
-				// Pass allowUnsafeResize to allow disabling of filesystem resize safety checks.
-				err = shrinkFileSystem(fsType, volDevPath, vol, sizeBytes, allowUnsafeResize)
-				if err != nil {
-					return err
-				}
-
-				l.Debug("TrueNAS volume filesystem shrunk")
-
-				// Shrink the block device.
-				err = d.setVolsize(dataset, sizeBytes, true) // allow shrink, shrink errors will be ignored.
-				if err != nil {
-					return err
-				}
-			} else if sizeBytes > oldVolSizeBytes {
-				// Grow block device first, ignoring any shrink errors, which could happen because we've
-				// already ignored a shrink error when shrinking.
-				err = d.setVolsize(dataset, sizeBytes, false)
-				if err != nil {
-					return err
-				}
-
-				// Grow the filesystem to fill block device.
-				err = growFileSystem(fsType, volDevPath, vol)
-				if err != nil {
-					return err
-				}
-
-				l.Debug("TrueNAS volume filesystem grown")
-			}
-		} else {
-			// Block image volumes cannot be resized because they have a readonly snapshot that doesn't get
-			// updated when the volume's size is changed, and this is what instances are created from.
-			// During initial volume fill allowUnsafeResize is enabled because snapshot hasn't been taken yet.
-			if !allowUnsafeResize && vol.volType == VolumeTypeImage {
-				return ErrNotSupported
-			}
-
-			// Only perform pre-resize checks if we are not in "unsafe" mode.
-			// In unsafe mode we expect the caller to know what they are doing and understand the risks.
-			if !allowUnsafeResize {
-				if sizeBytes < oldVolSizeBytes {
-					return fmt.Errorf("Block volumes cannot be shrunk: %w", ErrCannotBeShrunk)
-				}
-			}
-
-			// Adjust zvol size
-			err = d.setVolsize(dataset, sizeBytes, true)
-			if err != nil {
-				return err
-			}
-		}
-
-		// Move the VM GPT alt header to end of disk if needed (not needed in unsafe resize mode as
-		// it is expected the caller will do all necessary post resize actions themselves).
-		if vol.IsVMBlock() && !allowUnsafeResize {
-			err = vol.MountTask(func(mountPath string, op *operations.Operation) error {
-				devPath, err := d.GetVolumeDiskPath(vol)
-				if err != nil {
-					return err
-				}
-
-				return d.moveGPTAltHeader(devPath)
-			}, op)
-			if err != nil {
-				return err
-			}
-		}
-
+	// Do nothing if size isn't specified.
+	if sizeBytes <= 0 {
 		return nil
 	}
 
-	// Apply the new dataset quota.
-	d.setDatasetQuota(dataset, sizeBytes)
+	sizeBytes, err = d.roundVolumeBlockSizeBytes(vol, sizeBytes)
+	if err != nil {
+		return err
+	}
+
+	oldSizeBytesStr, err := d.getDatasetProperty(dataset, "volsize")
+	if err != nil {
+		return err
+	}
+
+	oldVolSizeBytesInt, err := strconv.ParseInt(oldSizeBytesStr, 10, 64)
+	if err != nil {
+		return err
+	}
+
+	oldVolSizeBytes := int64(oldVolSizeBytesInt)
+
+	if oldVolSizeBytes == sizeBytes {
+		return nil
+	}
+
+	if vol.contentType == ContentTypeFS {
+		// Activate volume if needed.
+		activated, volDevPath, err := d.activateVolume(vol)
+		if err != nil {
+			return err
+		}
+
+		if activated {
+			defer func() { _, _ = d.deactivateVolume(vol) }()
+		}
+
+		if vol.volType == VolumeTypeImage {
+			return fmt.Errorf("Image volumes cannot be resized: %w", ErrCannotBeShrunk)
+		}
+
+		fsType := vol.ConfigBlockFilesystem()
+
+		l := d.logger.AddContext(logger.Ctx{"dev": volDevPath, "size": fmt.Sprintf("%db", sizeBytes)})
+
+		if sizeBytes < oldVolSizeBytes {
+			if !filesystemTypeCanBeShrunk(fsType) {
+				return fmt.Errorf("Filesystem %q cannot be shrunk: %w", fsType, ErrCannotBeShrunk)
+			}
+
+			if inUse {
+				return ErrInUse // We don't allow online shrinking of filesystem block volumes.
+			}
+
+			// Shrink filesystem first.
+			// Pass allowUnsafeResize to allow disabling of filesystem resize safety checks.
+			err = shrinkFileSystem(fsType, volDevPath, vol, sizeBytes, allowUnsafeResize)
+			if err != nil {
+				return err
+			}
+
+			l.Debug("TrueNAS volume filesystem shrunk")
+
+			// Shrink the block device.
+			err = d.setVolsize(dataset, sizeBytes, true) // allow shrink, shrink errors will be ignored.
+			if err != nil {
+				return err
+			}
+		} else if sizeBytes > oldVolSizeBytes {
+			// Grow block device first, ignoring any shrink errors, which could happen because we've
+			// already ignored a shrink error when shrinking.
+			err = d.setVolsize(dataset, sizeBytes, false)
+			if err != nil {
+				return err
+			}
+
+			// Grow the filesystem to fill block device.
+			err = growFileSystem(fsType, volDevPath, vol)
+			if err != nil {
+				return err
+			}
+
+			l.Debug("TrueNAS volume filesystem grown")
+		}
+	} else {
+		// Block image volumes cannot be resized because they have a readonly snapshot that doesn't get
+		// updated when the volume's size is changed, and this is what instances are created from.
+		// During initial volume fill allowUnsafeResize is enabled because snapshot hasn't been taken yet.
+		if !allowUnsafeResize && vol.volType == VolumeTypeImage {
+			return ErrNotSupported
+		}
+
+		// Only perform pre-resize checks if we are not in "unsafe" mode.
+		// In unsafe mode we expect the caller to know what they are doing and understand the risks.
+		if !allowUnsafeResize {
+			if sizeBytes < oldVolSizeBytes {
+				return fmt.Errorf("Block volumes cannot be shrunk: %w", ErrCannotBeShrunk)
+			}
+		}
+
+		// Adjust zvol size
+		err = d.setVolsize(dataset, sizeBytes, true)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Move the VM GPT alt header to end of disk if needed (not needed in unsafe resize mode as
+	// it is expected the caller will do all necessary post resize actions themselves).
+	if vol.IsVMBlock() && !allowUnsafeResize {
+		err = vol.MountTask(func(mountPath string, op *operations.Operation) error {
+			devPath, err := d.GetVolumeDiskPath(vol)
+			if err != nil {
+				return err
+			}
+
+			return d.moveGPTAltHeader(devPath)
+		}, op)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -1813,7 +1773,7 @@ func (d *truenas) restoreVolume(vol Volume, snapshotName string, migration bool,
 		}
 	}
 
-	if vol.contentType == ContentTypeFS && d.isBlockBacked(vol) && renegerateFilesystemUUIDNeeded(vol.ConfigBlockFilesystem()) {
+	if vol.contentType == ContentTypeFS && renegerateFilesystemUUIDNeeded(vol.ConfigBlockFilesystem()) {
 		_, _, err = d.activateVolume(vol)
 		if err != nil {
 			return err
@@ -1942,8 +1902,4 @@ func (d *truenas) FillVolumeConfig(vol Volume) error {
 	}
 
 	return nil
-}
-
-func (d *truenas) isBlockBacked(vol Volume) bool {
-	return d.Info().BlockBacking
 }
