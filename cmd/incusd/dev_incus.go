@@ -238,7 +238,6 @@ var devIncusAPIHandler = devIncusHandler{"/1.0", func(d *Daemon, c instance.Inst
 	}
 
 	return response.DevIncusErrorResponse(api.StatusErrorf(http.StatusMethodNotAllowed, fmt.Sprintf("method %q not allowed", r.Method)), c.Type() == instancetype.VM)
-
 }}
 
 var devIncusDevicesGet = devIncusHandler{"/1.0/devices", func(d *Daemon, c instance.Instance, w http.ResponseWriter, r *http.Request) response.Response {
@@ -329,9 +328,9 @@ func devIncusAPI(d *Daemon, f hoistFunc) http.Handler {
  *    event, we use SO_PEERCRED to extract the creds for the socket.
  *
  * 2. We store a map from the connection pointer to the pid for that
- *    connection, so that once the HTTP negotiation occurrs and we get a
+ *    connection, so that once the HTTP negotiation occurs and we get a
  *    ResponseWriter, we know (because we negotiated on the first byte) which
- *    pid the connection belogs to.
+ *    pid the connection belongs to.
  *
  * 3. Regular HTTP negotiation and dispatch occurs via net/http.
  *

@@ -52,6 +52,7 @@ func qemuMachineType(architecture int) string {
 type qemuBaseOpts struct {
 	architecture int
 	iommu        bool
+	definition   string
 }
 
 func qemuBase(opts *qemuBaseOpts) []cfg.Section {
@@ -64,6 +65,10 @@ func qemuBase(opts *qemuBaseOpts) []cfg.Section {
 		gicVersion = "max"
 	case osarch.ARCH_64BIT_POWERPC_LITTLE_ENDIAN:
 		capLargeDecr = "off"
+	}
+
+	if opts.definition != "" {
+		machineType = opts.definition
 	}
 
 	sections := []cfg.Section{{
@@ -96,7 +101,7 @@ func qemuBase(opts *qemuBaseOpts) []cfg.Section {
 			Entries: []cfg.Entry{
 				{Key: "driver", Value: "ICH9-LPC"},
 				{Key: "property", Value: "disable_s4"},
-				{Key: "value", Value: "1"},
+				{Key: "value", Value: "0"},
 			},
 		}}...)
 	}
@@ -178,7 +183,8 @@ func qemuSerial(opts *qemuSerialOpts) []cfg.Section {
 		Comment: "Serial identifier",
 		Entries: []cfg.Entry{
 			{Key: "backend", Value: "ringbuf"},
-			{Key: "size", Value: fmt.Sprintf("%dB", opts.ringbufSizeBytes)}},
+			{Key: "size", Value: fmt.Sprintf("%dB", opts.ringbufSizeBytes)},
+		},
 	}, {
 		// QEMU serial device connected to the above ring buffer.
 		Name: `device "qemu_serial"`,
@@ -324,6 +330,7 @@ func qemuIOMMU(opts *qemuDevOpts, isWindows bool) []cfg.Section {
 			Entries: []cfg.Entry{
 				{Key: "driver", Value: "intel-iommu"},
 				{Key: "intremap", Value: "on"},
+				{Key: "caching-mode", Value: "on"},
 			},
 		}}
 	}

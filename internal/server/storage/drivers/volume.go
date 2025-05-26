@@ -28,7 +28,7 @@ const isoVolSuffix = ".iso"
 // DefaultBlockSize is the default size of block volumes.
 const DefaultBlockSize = "10GiB"
 
-// DefaultFilesystem filesytem to use for block devices by default.
+// DefaultFilesystem filesystem to use for block devices by default.
 const DefaultFilesystem = "ext4"
 
 // defaultFilesystemMountOpts mount options to use for filesystem block devices by default.
@@ -226,7 +226,7 @@ func (v Volume) EnsureMountPath() error {
 			}
 		}
 
-		err := os.Mkdir(volPath, 0711)
+		err := os.Mkdir(volPath, 0o711)
 		if err != nil {
 			return fmt.Errorf("Failed to create mount directory %q: %w", volPath, err)
 		}
@@ -234,7 +234,7 @@ func (v Volume) EnsureMountPath() error {
 		revert.Add(func() { _ = os.Remove(volPath) })
 	}
 
-	mode := os.FileMode(0711)
+	mode := os.FileMode(0o711)
 	if v.volType == VolumeTypeCustom && v.contentType == ContentTypeFS {
 		initialMode := v.ExpandedConfig("initial.mode")
 		if initialMode != "" {
@@ -275,7 +275,7 @@ func (v Volume) EnsureMountPath() error {
 
 	// Set very restrictive mode 0100 for non-custom, non-bucket and non-image volumes.
 	if v.volType != VolumeTypeCustom && v.volType != VolumeTypeImage && v.volType != VolumeTypeBucket {
-		mode = os.FileMode(0100)
+		mode = os.FileMode(0o100)
 	}
 
 	fInfo, err := os.Lstat(volPath)

@@ -32,7 +32,7 @@ do_copy() {
   # Set size to check this is supported during copy.
   if [ "$INCUS_BACKEND" != "truenas" ]; then
     # FIXME: truenas complaining that block backed volumes can't be shrunk
-    incus config device set c1 root size=50MiB
+    incus config device set c1 root size=200MiB
   fi
 
   targetPoolFlag=

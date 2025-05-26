@@ -22,8 +22,10 @@ import (
 	"github.com/lxc/incus/v6/shared/validate"
 )
 
-var cephfsVersion string
-var cephfsLoaded bool
+var (
+	cephfsVersion string
+	cephfsLoaded  bool
+)
 
 type cephfs struct {
 	common
@@ -249,14 +251,14 @@ func (d *cephfs) Create() error {
 
 	defer func() { _ = os.RemoveAll(mountPath) }()
 
-	err = os.Chmod(mountPath, 0700)
+	err = os.Chmod(mountPath, 0o700)
 	if err != nil {
 		return fmt.Errorf("Failed to chmod '%s': %w", mountPath, err)
 	}
 
 	mountPoint := filepath.Join(mountPath, "mount")
 
-	err = os.Mkdir(mountPoint, 0700)
+	err = os.Mkdir(mountPoint, 0o700)
 	if err != nil {
 		return fmt.Errorf("Failed to create directory '%s': %w", mountPoint, err)
 	}
@@ -297,7 +299,7 @@ func (d *cephfs) Create() error {
 	defer func() { _, _ = forceUnmount(mountPoint) }()
 
 	// Create the path if missing.
-	err = os.MkdirAll(filepath.Join(mountPoint, fsPath), 0755)
+	err = os.MkdirAll(filepath.Join(mountPoint, fsPath), 0o755)
 	if err != nil {
 		return fmt.Errorf("Failed to create directory '%s': %w", filepath.Join(mountPoint, fsPath), err)
 	}
@@ -327,13 +329,13 @@ func (d *cephfs) Delete(op *operations.Operation) error {
 
 	defer func() { _ = os.RemoveAll(mountPath) }()
 
-	err = os.Chmod(mountPath, 0700)
+	err = os.Chmod(mountPath, 0o700)
 	if err != nil {
 		return fmt.Errorf("Failed to chmod '%s': %w", mountPath, err)
 	}
 
 	mountPoint := filepath.Join(mountPath, "mount")
-	err = os.Mkdir(mountPoint, 0700)
+	err = os.Mkdir(mountPoint, 0o700)
 	if err != nil {
 		return fmt.Errorf("Failed to create directory '%s': %w", mountPoint, err)
 	}
@@ -480,7 +482,7 @@ func (d *cephfs) GetResources() (*api.ResourcesStoragePool, error) {
 }
 
 // MigrationTypes returns the supported migration types and options supported by the driver.
-func (d *cephfs) MigrationTypes(contentType ContentType, refresh bool, copySnapshots bool) []localMigration.Type {
+func (d *cephfs) MigrationTypes(contentType ContentType, refresh bool, copySnapshots bool, clusterMove bool, storageMove bool) []localMigration.Type {
 	var rsyncFeatures []string
 
 	// Do not pass compression argument to rsync if the associated

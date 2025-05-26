@@ -24,10 +24,12 @@ import (
 )
 
 // Simple cache used to store the activated drivers on this server.
-// This allows us to avoid querying the database everytime and API call is made.
-var storagePoolUsedDriversCacheVal atomic.Value
-var storagePoolSupportedDriversCacheVal atomic.Value
-var storagePoolDriversCacheLock sync.Mutex
+// This allows us to avoid querying the database every time an API call is made.
+var (
+	storagePoolUsedDriversCacheVal      atomic.Value
+	storagePoolSupportedDriversCacheVal atomic.Value
+	storagePoolDriversCacheLock         sync.Mutex
+)
 
 // readStoragePoolDriversCache returns supported and used storage driver info.
 func readStoragePoolDriversCache() ([]api.ServerStorageDriverInfo, map[string]string) {

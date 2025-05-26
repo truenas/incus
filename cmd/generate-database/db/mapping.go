@@ -14,12 +14,14 @@ import (
 
 // Mapping holds information for mapping database tables to a Go structure.
 type Mapping struct {
-	Package    string    // Package of the Go struct
-	Name       string    // Name of the Go struct.
-	Fields     []*Field  // Metadata about the Go struct.
-	Filterable bool      // Whether the Go struct has a Filter companion struct for filtering queries.
-	Filters    []*Field  // Metadata about the Go struct used for filter fields.
-	Type       TableType // Type of table structure for this Go struct.
+	Local       bool      // Whether the entity is in the same package as the generated code.
+	FilterLocal bool      // Whether the entity is in the same package as the generated code.
+	Package     string    // Package of the Go struct
+	Name        string    // Name of the Go struct.
+	Fields      []*Field  // Metadata about the Go struct.
+	Filterable  bool      // Whether the Go struct has a Filter companion struct for filtering queries.
+	Filters     []*Field  // Metadata about the Go struct used for filter fields.
+	Type        TableType // Type of table structure for this Go struct.
 }
 
 // TableType represents the logical type of the table defined by the Go struct.
@@ -250,6 +252,26 @@ func (m *Mapping) FieldParamsMarshal(fields []*Field) string {
 	return strings.Join(args, ", ")
 }
 
+// ImportType returns the type of the entity for the mapping, prefixing the import package if necessary.
+func (m *Mapping) ImportType() string {
+	name := lex.PascalCase(m.Name)
+	if m.Local {
+		return name
+	}
+
+	return m.Package + "." + lex.PascalCase(name)
+}
+
+// ImportFilterType returns the Filter type of the entity for the mapping, prefixing the import package if necessary.
+func (m *Mapping) ImportFilterType() string {
+	name := lex.PascalCase(entityFilter(m.Name))
+	if m.FilterLocal {
+		return name
+	}
+
+	return m.Package + "." + name
+}
+
 // Field holds all information about a field in a Go struct that is relevant
 // for database code generation.
 type Field struct {
@@ -312,7 +334,7 @@ func (f *Field) SelectColumn(mapping *Mapping, primaryTable string) (string, err
 	if mapping.Type == ReferenceTable || mapping.Type == MapTable {
 		table := primaryTable
 		column := fmt.Sprintf("%s.%s", table, lex.SnakeCase(f.Name))
-		column = strings.Replace(column, "reference", "%s", -1)
+		column = strings.ReplaceAll(column, "reference", "%s")
 
 		return column, nil
 	}
@@ -356,7 +378,7 @@ func (f *Field) OrderBy(mapping *Mapping, primaryTable string) (string, error) {
 	if mapping.Type == ReferenceTable || mapping.Type == MapTable {
 		table := primaryTable
 		column := fmt.Sprintf("%s.%s", table, lex.SnakeCase(f.Name))
-		column = strings.Replace(column, "reference", "%s", -1)
+		column = strings.ReplaceAll(column, "reference", "%s")
 
 		return column, nil
 	}
@@ -399,7 +421,7 @@ func (f *Field) JoinClause(mapping *Mapping, table string) (string, error) {
 
 	join := f.JoinConfig()
 	if f.Config.Get("leftjoin") != "" {
-		joinTemplate = strings.Replace(joinTemplate, "JOIN", "LEFT JOIN", -1)
+		joinTemplate = strings.ReplaceAll(joinTemplate, "JOIN", "LEFT JOIN")
 	}
 
 	joinTable, _, ok := strings.Cut(join, ".")
@@ -434,7 +456,7 @@ func (f *Field) JoinClause(mapping *Mapping, table string) (string, error) {
 // to select the ID to insert into this table.
 // - If a 'joinon' tag is present, but this table is not among the conditions, then the join will be considered indirect,
 // and an empty string will be returned.
-func (f *Field) InsertColumn(pkg *types.Package, mapping *Mapping, primaryTable string, defs map[*ast.Ident]types.Object, registeredSQLStmts map[string]string) (string, string, error) {
+func (f *Field) InsertColumn(mapping *Mapping, primaryTable string, defs map[*ast.Ident]types.Object, registeredSQLStmts map[string]string) (string, string, error) {
 	var column string
 	var value string
 	var err error
@@ -479,8 +501,8 @@ func (f *Field) InsertColumn(pkg *types.Package, mapping *Mapping, primaryTable 
 			return "", "", fmt.Errorf("Failed to find registered statement %q for field %q of struct %q: %w", varName, f.Name, mapping.Name, err)
 		}
 
-		value = fmt.Sprintf("(%s)", strings.Replace(strings.Replace(joinStmt, "`", "", -1), "\n", "", -1))
-		value = strings.Replace(value, "  ", " ", -1)
+		value = fmt.Sprintf("(%s)", strings.ReplaceAll(strings.ReplaceAll(joinStmt, "`", ""), "\n", ""))
+		value = strings.ReplaceAll(value, "  ", " ")
 	} else {
 		column, err = f.SelectColumn(mapping, primaryTable)
 		if err != nil {
@@ -492,7 +514,7 @@ func (f *Field) InsertColumn(pkg *types.Package, mapping *Mapping, primaryTable 
 		column, _, _ = strings.Cut(column, ",")
 
 		if mapping.Type == ReferenceTable || mapping.Type == MapTable {
-			column = strings.Replace(column, "reference", "%s", -1)
+			column = strings.ReplaceAll(column, "reference", "%s")
 		}
 
 		value = "?"

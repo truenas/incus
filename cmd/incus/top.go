@@ -69,8 +69,10 @@ Column shorthand chars:
 	return cmd
 }
 
-const defaultTopColumns = "numD"
-const defaultTopColumnsAllProjects = "enumD"
+const (
+	defaultTopColumns            = "numD"
+	defaultTopColumnsAllProjects = "enumD"
+)
 
 func (c *cmdTop) parseColumns() ([]topColumn, error) {
 	columnsShorthandMap := map[rune]topColumn{
@@ -137,7 +139,7 @@ func (c *cmdTop) diskUsageColumnData(dd displayData) string {
 func (c *cmdTop) Run(cmd *cobra.Command, args []string) error {
 	conf := c.global.conf
 
-	exit, err := c.global.CheckArgs(cmd, args, 0, 1)
+	exit, err := c.global.checkArgs(cmd, args, 0, 1)
 	if exit {
 		return err
 	}

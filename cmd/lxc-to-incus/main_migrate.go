@@ -165,8 +165,7 @@ func validateConfig(conf []string, container *liblxc.Container) error {
 	return nil
 }
 
-func convertContainer(d incus.InstanceServer, container *liblxc.Container, storage string,
-	dryRun bool, rsyncArgs string, debug bool) error {
+func convertContainer(d incus.InstanceServer, container *liblxc.Container, storage string, dryRun bool, rsyncArgs string, debug bool) error {
 	// Don't migrate running containers
 	if container.Running() {
 		return fmt.Errorf("Only stopped containers can be migrated")
@@ -337,8 +336,7 @@ func convertContainer(d incus.InstanceServer, container *liblxc.Container, stora
 	if value != nil {
 		for _, cap := range strings.Split(value[0], " ") {
 			// Ignore capabilities that are dropped in containers by default.
-			if slices.Contains([]string{"mac_admin", "mac_override", "sys_module",
-				"sys_time"}, cap) {
+			if slices.Contains([]string{"mac_admin", "mac_override", "sys_module", "sys_time"}, cap) {
 				continue
 			}
 
@@ -401,14 +399,14 @@ func convertContainer(d incus.InstanceServer, container *liblxc.Container, stora
 		arch = value[0]
 	}
 
-	archID, err := osarch.ArchitectureId(arch)
+	archID, err := osarch.ArchitectureID(arch)
 	if err != nil {
 		// If arch is linux32 or linux64, the architecture ID cannot be determined as multiple
 		// architectures have the linux32 or linux64 personality. In this case, assume the native
 		// architecture.
 		arch = runtime.GOARCH
 
-		archID, err = osarch.ArchitectureId(arch)
+		archID, err = osarch.ArchitectureID(arch)
 		if err != nil {
 			return err
 		}
