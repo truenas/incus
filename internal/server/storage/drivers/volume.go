@@ -72,7 +72,7 @@ const VolumeTypeVM = VolumeType("virtual-machines")
 // ContentType indicates the format of the volume.
 type ContentType string
 
-// ContentTypeFS indicates the volume will be populated with a mountabble filesystem.
+// ContentTypeFS indicates the volume will be populated with a mountable filesystem.
 const ContentTypeFS = ContentType("filesystem")
 
 // ContentTypeBlock indicates the volume will be a block device and its contents and we do not
@@ -212,8 +212,8 @@ func (v Volume) MountInUse() bool {
 func (v Volume) EnsureMountPath() error {
 	volPath := v.MountPath()
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Create volume's mount path if missing, with any created directories set to 0711.
 	if !util.PathExists(volPath) {
@@ -231,7 +231,7 @@ func (v Volume) EnsureMountPath() error {
 			return fmt.Errorf("Failed to create mount directory %q: %w", volPath, err)
 		}
 
-		revert.Add(func() { _ = os.Remove(volPath) })
+		reverter.Add(func() { _ = os.Remove(volPath) })
 	}
 
 	mode := os.FileMode(0o711)
@@ -298,7 +298,7 @@ func (v Volume) EnsureMountPath() error {
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
 	return nil
 }
 

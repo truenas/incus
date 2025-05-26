@@ -101,6 +101,7 @@ type cmdStorageCreate struct {
 func (c *cmdStorageCreate) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("create", i18n.G("[<remote>:]<pool> <driver> [key=value...]"))
+	cmd.Aliases = []string{"add"}
 	cmd.Short = i18n.G("Create storage pools")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Create storage pools`))
@@ -219,7 +220,7 @@ type cmdStorageDelete struct {
 func (c *cmdStorageDelete) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("delete", i18n.G("[<remote>:]<pool>"))
-	cmd.Aliases = []string{"rm"}
+	cmd.Aliases = []string{"rm", "remove"}
 	cmd.Short = i18n.G("Delete storage pools")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Delete storage pools`))
@@ -685,7 +686,7 @@ func (c *cmdStorageList) Command() *cobra.Command {
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`List available storage pools
 
-Default column layout: nDSdus
+Default column layout: nDdus
 
 == Columns ==
 The -c option takes a comma separated list of arguments that control
@@ -706,7 +707,7 @@ Pre-defined column shorthand chars:
   s - state`))
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultStorageColumns, i18n.G("Columns")+"``")
 
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())

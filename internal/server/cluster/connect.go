@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,7 +13,6 @@ import (
 	incus "github.com/lxc/incus/v6/client"
 	clusterRequest "github.com/lxc/incus/v6/internal/server/cluster/request"
 	"github.com/lxc/incus/v6/internal/server/db"
-	"github.com/lxc/incus/v6/internal/server/instance/instancetype"
 	"github.com/lxc/incus/v6/internal/server/request"
 	"github.com/lxc/incus/v6/internal/server/state"
 	storagePools "github.com/lxc/incus/v6/internal/server/storage"
@@ -85,7 +85,7 @@ func Connect(address string, networkCert *localtls.CertInfo, serverCert *localtl
 // ConnectIfInstanceIsRemote figures out the address of the cluster member which is running the instance with the
 // given name in the specified project. If it's not the local member will connect to it and return the connected
 // client (configured with the specified project), otherwise it will just return nil.
-func ConnectIfInstanceIsRemote(s *state.State, projectName string, instName string, r *http.Request, instanceType instancetype.Type) (incus.InstanceServer, error) {
+func ConnectIfInstanceIsRemote(s *state.State, projectName string, instName string, r *http.Request) (incus.InstanceServer, error) {
 	// No need to connect if not clustered.
 	if !s.ServerClustered {
 		return nil, nil
@@ -94,7 +94,7 @@ func ConnectIfInstanceIsRemote(s *state.State, projectName string, instName stri
 	var address string // Cluster member address.
 	err := s.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 		var err error
-		address, err = tx.GetNodeAddressOfInstance(ctx, projectName, instName, instanceType)
+		address, err = tx.GetNodeAddressOfInstance(ctx, projectName, instName)
 		return err
 	})
 	if err != nil {
@@ -136,14 +136,14 @@ func ConnectIfVolumeIsRemote(s *state.State, poolName string, projectName string
 
 		return nil
 	})
-	if err != nil && err != db.ErrNoClusterMember {
+	if err != nil && !errors.Is(err, db.ErrNoClusterMember) {
 		return nil, err
 	}
 
 	// If volume uses a remote storage driver and so has no explicit cluster member, then we need to check
 	// whether it is exclusively attached to remote instance, and if so then we need to forward the request to
 	// the node whereit is currently used. This avoids conflicting with another member when using it locally.
-	if err == db.ErrNoClusterMember {
+	if errors.Is(err, db.ErrNoClusterMember) {
 		// GetStoragePoolVolume returns a volume with an empty Location field for remote drivers.
 		var dbVolume *db.StorageVolume
 		err = s.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
@@ -165,7 +165,7 @@ func ConnectIfVolumeIsRemote(s *state.State, poolName string, projectName string
 			remoteInstance = &dbInst
 			return nil
 		})
-		if err != nil && err != db.ErrInstanceListStop {
+		if err != nil && !errors.Is(err, db.ErrInstanceListStop) {
 			return nil, err
 		}
 

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/lxc/incus/v6/internal/migration"
 	deviceConfig "github.com/lxc/incus/v6/internal/server/device/config"
@@ -35,6 +36,10 @@ var tnDefaultSettings = map[string]string{
 
 type truenas struct {
 	common
+
+	// Temporary cache (typically lives for the duration of a query).
+	cache   map[string]map[string]int64
+	cacheMu sync.Mutex
 }
 
 func (d *truenas) isVersionGE(thisVersion version.DottedVersion, thatVersion string) bool {
@@ -105,6 +110,11 @@ func (d *truenas) load() error {
 	return nil
 }
 
+// isRemote returns true indicating this driver uses remote storage.
+func (d *truenas) isRemote() bool {
+	return true
+}
+
 // Info returns info about the driver and its environment.
 func (d *truenas) Info() Info {
 	info := Info{
@@ -116,8 +126,8 @@ func (d *truenas) Info() Info {
 		PreservesInodes:              false,
 		Remote:                       d.isRemote(),
 		VolumeTypes:                  []VolumeType{VolumeTypeCustom, VolumeTypeImage, VolumeTypeContainer, VolumeTypeVM},
-		VolumeMultiNode:              d.isRemote(),
-		BlockBacking:                 false,
+		VolumeMultiNode:              false, // can only use the same volume if its read-only.d.isRemote(),
+		BlockBacking:                 true,
 		RunningCopyFreeze:            true,
 		DirectIO:                     false,
 		IOUring:                      false,
@@ -131,7 +141,7 @@ func (d *truenas) Info() Info {
 // ensureInitialDatasets creates missing initial datasets or configures existing ones with current policy.
 // Accepts warnOnExistingPolicyApplyError argument, if true will warn rather than fail if applying current policy
 // to an existing dataset fails.
-func (d truenas) ensureInitialDatasets(warnOnExistingPolicyApplyError bool) error {
+func (d *truenas) ensureInitialDatasets(warnOnExistingPolicyApplyError bool) error {
 	args := make([]string, 0, len(tnDefaultSettings))
 	for k, v := range tnDefaultSettings {
 		args = append(args, fmt.Sprintf("%s=%s", k, v))
@@ -156,11 +166,7 @@ func (d truenas) ensureInitialDatasets(warnOnExistingPolicyApplyError bool) erro
 		fullDatasetPaths[i] = filepath.Join(d.config["truenas.dataset"], datasets[i])
 	}
 
-	//properties := []string{"mountpoint=legacy"}
 	properties := []string{}
-	// if slices.Contains([]string{"virtual-machines", "deleted/virtual-machines"}, dataset) {
-	// 	properties = append(properties, "volmode=none")
-	// }
 
 	shouldCreateMissingDatasets := true
 	return d.updateDatasets(fullDatasetPaths, shouldCreateMissingDatasets, properties...)
@@ -172,6 +178,11 @@ func (d *truenas) FillConfig() error {
 	// populate source if not already present
 	if d.config["truenas.dataset"] != "" && d.config["source"] == "" {
 		d.config["source"] = d.config["truenas.dataset"]
+	}
+
+	err := d.parseSource()
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -201,7 +212,6 @@ func (d *truenas) parseSource() error {
 		source += d.name
 	}
 
-	// legacy stores source in truenas.dataset
 	d.config["truenas.dataset"] = source
 
 	if host != "" {
@@ -213,11 +223,6 @@ func (d *truenas) parseSource() error {
 		d.config["truenas.host"] = host
 	}
 	d.config["source"] = source
-
-	// set host url
-	if d.config["truenas.url"] == "" && d.config["truenas.host"] != "" {
-		d.config["truenas.url"] = fmt.Sprintf("wss://%s/api/current", d.config["truenas.host"])
-	}
 
 	return nil
 }
@@ -234,11 +239,6 @@ func (d *truenas) Create() error {
 		return err
 	}
 
-	err = d.parseSource()
-	if err != nil {
-		return err
-	}
-
 	// create pool dataset
 	exists, err := d.datasetExists(d.config["truenas.dataset"])
 	if err != nil {
@@ -248,9 +248,9 @@ func (d *truenas) Create() error {
 	if !exists {
 		err = d.createDataset(d.config["truenas.dataset"])
 		if err != nil {
-			return fmt.Errorf("Failed to create storage pool on TrueNAS host: %s", d.config["source"])
+			return fmt.Errorf("Failed to create storage pool on TrueNAS host: %s, err: %w", d.config["source"], err)
 		}
-	} else {
+	} else if util.IsFalseOrEmpty(d.config["truenas.force_reuse"]) {
 		// Confirm that the existing pool/dataset is all empty.
 		datasets, err := d.getDatasets(d.config["truenas.dataset"], "all")
 		if err != nil {
@@ -260,16 +260,15 @@ func (d *truenas) Create() error {
 		if len(datasets) > 0 {
 			return fmt.Errorf(`Remote TrueNAS dataset isn't empty: %s`, d.config["truenas.dataset"])
 		}
-
 	}
 
 	// Setup revert in case of problems
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
-	revert.Add(func() { _ = d.Delete(nil) })
+	reverter.Add(func() { _ = d.Delete(nil) })
 
-	revert.Success()
+	reverter.Success()
 	return nil
 }
 
@@ -303,8 +302,7 @@ func (d *truenas) Delete(op *operations.Operation) error {
 		}
 
 		// Delete the dataset.
-		out, err := d.runTool("dataset", "delete", "-r", d.config["truenas.dataset"])
-		_ = out
+		err = d.deleteDataset(d.config["truenas.dataset"], true)
 		if err != nil {
 			return err
 		}
@@ -322,13 +320,20 @@ func (d *truenas) Delete(op *operations.Operation) error {
 // Validate checks that all provide keys are supported and that no conflicting or missing configuration is present.
 func (d *truenas) Validate(config map[string]string) error {
 	rules := map[string]func(value string) error{
-		"source":             validate.IsAny,
-		"truenas.dataset":    validate.IsAny,
-		"truenas.host":       validate.IsAny,
-		"truenas.api_key":    validate.IsAny,
-		"truenas.key_file":   validate.IsAny,
-		"truenas.url":        validate.IsAny,
-		"truenas.clone_copy": validate.Optional(validate.IsBool),
+		// only truenas.dataset is required. the tool has default behaviour/connections defined.
+		"source":          validate.IsAny, // can be used as a shortcut to specify datset and optionaly host.
+		"truenas.dataset": validate.IsAny,
+
+		// global flags for the tool
+		"truenas.allow_insecure": validate.Optional(validate.IsBool),
+		"truenas.api_key":        validate.IsAny,
+		"truenas.config":         validate.IsAny,
+		"truenas.config_file":    validate.IsAny,
+		"truenas.host":           validate.IsAny,
+
+		// controls behaviour of the driver
+		"truenas.clone_copy":  validate.Optional(validate.IsBool),
+		"truenas.force_reuse": validate.Optional(validate.IsBool),
 	}
 
 	return d.validatePool(config, rules, d.commonVolumeRules())
@@ -342,17 +347,22 @@ func (d *truenas) Update(changedConfig map[string]string) error {
 		return fmt.Errorf("truenas.dataset cannot be modified")
 	}
 
-	host, ok := changedConfig["truenas.host"]
-	if ok {
-		d.config["truenas.host"] = host
+	// prop changes we want to accept
+	props := []string{
+		"truenas.allow_insecure",
+		"truenas.api_key",
+		"truenas.config",
+		"truenas.config_file",
+		"truenas.host",
+		"truenas.clone_copy",
+		"truenas.force_reuse",
 	}
-	url, ok := changedConfig["truenas.host"]
-	if ok {
-		d.config["truenas.url"] = url
-	}
-	apikey, ok := changedConfig["truenas.api_key"]
-	if ok {
-		d.config["truenas.api_key"] = apikey
+
+	for _, prop := range props {
+		value, ok := changedConfig[prop]
+		if ok {
+			d.config[prop] = value
+		}
 	}
 
 	return nil
@@ -460,15 +470,13 @@ func (d *truenas) MigrationTypes(contentType ContentType, refresh bool, copySnap
 }
 
 // roundVolumeBlockSizeBytes returns sizeBytes rounded up to the next multiple
-// of `vol`'s "zfs.blocksize".
+// of `vol`'s "truenas.blocksize".
 func (d *truenas) roundVolumeBlockSizeBytes(vol Volume, sizeBytes int64) (int64, error) {
-	// NOTE: "zfs.blocksize" has support througout incus
-	minBlockSize, err := units.ParseByteSizeString(vol.ExpandedConfig("zfs.blocksize"))
+	minBlockSize, err := units.ParseByteSizeString(vol.ExpandedConfig("truenas.blocksize"))
 
-	// minBlockSize will be 0 if zfs.blocksize=""
+	// minBlockSize will be 0 if truenas.blocksize=""
 	if minBlockSize <= 0 || err != nil {
-		// 16KiB is the default volblocksize
-		minBlockSize = 16 * 1024
+		minBlockSize = tnDefaultVolblockSize // 16KiB
 	}
 
 	return roundAbove(minBlockSize, sizeBytes), nil

@@ -352,6 +352,17 @@ func (d *common) Snapshots() ([]instance.Instance, error) {
 		return nil, err
 	}
 
+	// Allow storage to pre-fetch snapshot details using bulk queries.
+	pool, err := d.getStoragePool()
+	if err != nil {
+		return nil, err
+	}
+
+	err = pool.CacheInstanceSnapshots(d)
+	if err != nil {
+		return nil, err
+	}
+
 	snapshots := make([]instance.Instance, 0, len(snapshotArgs))
 	for _, snapshotArg := range snapshotArgs {
 		// Populate profile info that was already loaded.
@@ -362,6 +373,18 @@ func (d *common) Snapshots() ([]instance.Instance, error) {
 			return nil, err
 		}
 
+		// Set the storage pool to the pre-loaded one (for caching).
+		snapLXC, ok := snapInst.(*lxc)
+		if ok {
+			snapLXC.storagePool = pool
+		}
+
+		snapQEMU, ok := snapInst.(*qemu)
+		if ok {
+			snapQEMU.storagePool = pool
+		}
+
+		// Pass through the current operation.
 		snapInst.SetOperation(d.op)
 
 		snapshots = append(snapshots, instance.Instance(snapInst))
@@ -762,8 +785,8 @@ func (d *common) runHooks(hooks []func() error) error {
 
 // snapshot handles the common part of the snapshotting process.
 func (d *common) snapshotCommon(inst instance.Instance, name string, expiry time.Time, stateful bool) error {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Setup the arguments.
 	args := db.InstanceArgs{
@@ -786,7 +809,7 @@ func (d *common) snapshotCommon(inst instance.Instance, name string, expiry time
 		return fmt.Errorf("Failed creating instance snapshot record %q: %w", name, err)
 	}
 
-	revert.Add(cleanup)
+	reverter.Add(cleanup)
 	defer snapInstOp.Done(err)
 
 	pool, err := storagePools.LoadByInstance(d.state, snap)
@@ -799,7 +822,7 @@ func (d *common) snapshotCommon(inst instance.Instance, name string, expiry time
 		return fmt.Errorf("Create instance snapshot: %w", err)
 	}
 
-	revert.Add(func() { _ = snap.Delete(true) })
+	reverter.Add(func() { _ = snap.Delete(true) })
 
 	// Mount volume for backup.yaml writing.
 	_, err = pool.MountInstance(inst, d.op)
@@ -815,7 +838,8 @@ func (d *common) snapshotCommon(inst instance.Instance, name string, expiry time
 		return err
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -1252,8 +1276,8 @@ func (d *common) deviceRemove(dev device.Device, instanceRunning bool) error {
 
 // devicesAdd adds devices to instance.
 func (d *common) devicesAdd(inst instance.Instance, instanceRunning bool) (revert.Hook, error) {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	for _, entry := range d.expandedDevices.Sorted() {
 		dev, err := d.deviceLoad(inst, entry.Name, entry.Config)
@@ -1285,11 +1309,12 @@ func (d *common) devicesAdd(inst instance.Instance, instanceRunning bool) (rever
 			return nil, fmt.Errorf("Failed to add device %q: %w", dev.Name(), err)
 		}
 
-		revert.Add(func() { _ = d.deviceRemove(dev, instanceRunning) })
+		reverter.Add(func() { _ = d.deviceRemove(dev, instanceRunning) })
 	}
 
-	cleanup := revert.Clone().Fail
-	revert.Success()
+	cleanup := reverter.Clone().Fail
+	reverter.Success()
+
 	return cleanup, nil
 }
 
@@ -1310,8 +1335,8 @@ func (d *common) devicesRegister(inst instance.Instance) {
 
 // devicesUpdate applies device changes to an instance.
 func (d *common) devicesUpdate(inst instance.Instance, removeDevices deviceConfig.Devices, addDevices deviceConfig.Devices, updateDevices deviceConfig.Devices, oldExpandedDevices deviceConfig.Devices, instanceRunning bool, userRequested bool) error {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	dm, ok := inst.(deviceManager)
 	if !ok {
@@ -1341,7 +1366,7 @@ func (d *common) devicesUpdate(inst instance.Instance, removeDevices deviceConfi
 			}
 
 			err = d.deviceRemove(dev, instanceRunning)
-			if err != nil && err != device.ErrUnsupportedDevType {
+			if err != nil && !errors.Is(err, device.ErrUnsupportedDevType) {
 				return fmt.Errorf("Failed to remove device %q: %w", dev.Name(), err)
 			}
 		}
@@ -1389,7 +1414,7 @@ func (d *common) devicesUpdate(inst instance.Instance, removeDevices deviceConfi
 			l.Error("Failed to add device, skipping as non-user requested", logger.Ctx{"err": err})
 		}
 
-		revert.Add(func() { _ = d.deviceRemove(dev, instanceRunning) })
+		reverter.Add(func() { _ = d.deviceRemove(dev, instanceRunning) })
 
 		if instanceRunning {
 			err = dev.PreStartCheck()
@@ -1398,11 +1423,11 @@ func (d *common) devicesUpdate(inst instance.Instance, removeDevices deviceConfi
 			}
 
 			_, err := dm.deviceStart(dev, instanceRunning)
-			if err != nil && err != device.ErrUnsupportedDevType {
+			if err != nil && !errors.Is(err, device.ErrUnsupportedDevType) {
 				return fmt.Errorf("Failed to start device %q: %w", dev.Name(), err)
 			}
 
-			revert.Add(func() { _ = dm.deviceStop(dev, instanceRunning, "") })
+			reverter.Add(func() { _ = dm.deviceStop(dev, instanceRunning, "") })
 		}
 	}
 
@@ -1438,7 +1463,7 @@ func (d *common) devicesUpdate(inst instance.Instance, removeDevices deviceConfi
 				}
 
 				err = d.deviceRemove(dev, instanceRunning)
-				if err != nil && err != device.ErrUnsupportedDevType {
+				if err != nil && !errors.Is(err, device.ErrUnsupportedDevType) {
 					l.Error("Failed to remove device after update validation failed", logger.Ctx{"err": err})
 				}
 			}
@@ -1452,7 +1477,8 @@ func (d *common) devicesUpdate(inst instance.Instance, removeDevices deviceConfi
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 

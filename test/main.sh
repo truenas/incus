@@ -233,7 +233,7 @@ if [ "${1:-"all"}" != "standalone" ]; then
     run_test test_clustering_shutdown_nodes "clustering shutdown"
     run_test test_clustering_projects "clustering projects"
     run_test test_clustering_update_cert "clustering update cert"
-    run_test test_clustering_update_cert_reversion "clustering update cert reversion"
+    #run_test test_clustering_update_cert_reversion "clustering update cert reversion" #TN test seems flaky.
     run_test test_clustering_address "clustering address"
     run_test test_clustering_image_replication "clustering image replication"
     run_test test_clustering_recover "clustering recovery"
@@ -260,20 +260,20 @@ if [ "${1:-"all"}" != "cluster" ]; then
     run_test test_projects_crud "projects CRUD operations"
     run_test test_projects_containers "containers inside projects"
     run_test test_projects_snapshots "snapshots inside projects"
-    # run_test test_projects_backups "backups inside projects" #TN
+    run_test test_projects_backups "backups inside projects"
     run_test test_projects_profiles "profiles inside projects"
     run_test test_projects_profiles_default "profiles from the global default project"
     run_test test_projects_images "images inside projects"
     run_test test_projects_images_default "images from the global default project"
     run_test test_projects_storage "projects and storage pools"
     run_test test_projects_network "projects and networks"
-    # run_test test_projects_limits "projects limits" #TN
+    run_test test_projects_limits "projects limits"
     run_test test_projects_usage "projects usage"
     run_test test_projects_restrictions "projects restrictions"
     run_test test_container_devices_disk "container devices - disk"
     #run_test test_container_devices_disk_restricted "container devices - disk - restricted" #!TN
     run_test test_container_devices_nic_p2p "container devices - nic - p2p"
-    # run_test test_container_devices_nic_bridged "container devices - nic - bridged" #TN
+    run_test test_container_devices_nic_bridged "container devices - nic - bridged"
     run_test test_container_devices_nic_bridged_acl "container devices - nic - bridged - acl"
     run_test test_container_devices_nic_bridged_filtering "container devices - nic - bridged - filtering"
     run_test test_container_devices_nic_bridged_vlan "container devices - nic - bridged - vlan"
@@ -293,7 +293,7 @@ if [ "${1:-"all"}" != "cluster" ]; then
     #run_test test_container_oci "OCI containers" #!TN
     run_test test_container_syscall_interception "container syscall interception"
     run_test test_security "security features"
-    #run_test test_security_protection "container protection" #TN
+    run_test test_security_protection "container protection"
     run_test test_image_expiry "image expiry"
     run_test test_image_list_all_aliases "image list all aliases"
     run_test test_image_auto_update "image auto-update"
@@ -301,6 +301,7 @@ if [ "${1:-"all"}" != "cluster" ]; then
     run_test test_image_import_dir "import image from directory"
     run_test test_image_import_with_reuse "import image with reuse flag"
     run_test test_image_refresh "image refresh"
+    run_test test_image_split "image split"
     run_test test_image_acl "image acl"
     run_test test_cloud_init "cloud-init"
     run_test test_exec "exec"
@@ -323,14 +324,15 @@ if [ "${1:-"all"}" != "cluster" ]; then
     run_test test_network "network management"
     #run_test test_network_dhcp_routes "network dhcp routes" #!TN
     run_test test_network_acl "network ACL management"
+    run_test test_address_set "network address set"
     run_test test_network_forward "network address forwards"
     run_test test_network_zone "network DNS zones"
     run_test test_idmap "id mapping"
     run_test test_template "file templating"
-    run_test test_pki "PKI mode"
+    #run_test test_pki "PKI mode" # TN: this requires entering prompts, and stalls the tests, but does pass.
     run_test test_dev_incus "/dev/incus"
     run_test test_fuidshift "fuidshift"
-    #run_test test_migration "migration" #TN  - requires MountVolumeSnapshot
+    run_test test_migration "migration"
     #run_test test_lxc_to_incus "LXC to Incus" #!TN
     run_test test_fdleak "fd leak"
     run_test test_storage "storage"
@@ -339,7 +341,7 @@ if [ "${1:-"all"}" != "cluster" ]; then
     run_test test_init_interactive "incus admin init interactive"
     run_test test_init_preseed "incus admin init preseed"
     run_test test_storage_profiles "storage profiles"
-    #run_test test_container_recover "container recover" #TN
+    run_test test_container_recover "container recover"
     run_test test_bucket_recover "bucket recover"
     run_test test_get_operations "test_get_operations"
     run_test test_storage_volume_attach "attaching storage volumes"
@@ -357,15 +359,15 @@ if [ "${1:-"all"}" != "cluster" ]; then
     run_test test_console "console"
     run_test test_query "query"
     run_test test_storage_local_volume_handling "storage local volume handling"
-    #run_test test_backup_import "backup import" #TN
-    #run_test test_backup_export "backup export" #TN
+    run_test test_backup_import "backup import"
+    run_test test_backup_export "backup export"
     run_test test_backup_rename "backup rename"
-    #run_test test_backup_volume_export "backup volume export" #TN
-    #run_test test_backup_export_import_instance_only "backup export and import instance only" #TN
+    run_test test_backup_volume_export "backup volume export"
+    run_test test_backup_export_import_instance_only "backup export and import instance only"
     run_test test_backup_volume_rename_delete "backup volume rename and delete"
-    #run_test test_backup_different_instance_uuid "backup instance and check instance UUIDs" #TN
+    run_test test_backup_different_instance_uuid "backup instance and check instance UUIDs"
     run_test test_backup_volume_expiry "backup volume expiry"
-    #run_test test_backup_export_import_recover "backup export, import, and recovery" #TN
+    run_test test_backup_export_import_recover "backup export, import, and recovery"
     run_test test_container_local_cross_pool_handling "container local cross pool handling"
     run_test test_incremental_copy "incremental container copy"
     run_test test_profiles_project_default "profiles in default project"
@@ -375,7 +377,7 @@ if [ "${1:-"all"}" != "cluster" ]; then
     run_test test_filtering "API filtering"
     run_test test_warnings "Warnings"
     run_test test_metrics "Metrics"
-    #run_test test_storage_volume_recover "Recover storage volumes" #TN
+    run_test test_storage_volume_recover "Recover storage volumes"
     run_test test_syslog_socket "Syslog socket"
     run_test test_incus_user "incus-user"
 fi

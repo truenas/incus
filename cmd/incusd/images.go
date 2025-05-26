@@ -206,8 +206,14 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 	projectName := request.ProjectParam(r)
 	name := req.Source.Name
 	ctype := req.Source.Type
+	imageType := req.Format
+
 	if ctype == "" || name == "" {
 		return nil, fmt.Errorf("No source provided")
+	}
+
+	if imageType != "" && imageType != "unified" && imageType != "split" {
+		return nil, fmt.Errorf("Invalid image format")
 	}
 
 	switch ctype {
@@ -241,12 +247,18 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 	info.Type = c.Type().String()
 
 	// Build the actual image file
-	imageFile, err := os.CreateTemp(builddir, "incus_build_image_")
+	metaFile, err := os.CreateTemp(builddir, "incus_build_image_")
 	if err != nil {
 		return nil, err
 	}
 
-	defer func() { _ = os.Remove(imageFile.Name()) }()
+	rootfsFile, err := os.CreateTemp(builddir, "incus_build_image_")
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = os.Remove(metaFile.Name()) }()
+	defer func() { _ = os.Remove(rootfsFile.Name()) }()
 
 	// Calculate (close estimate of) total size of input to image
 	totalSize := int64(0)
@@ -265,7 +277,7 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 
 	// Track progress creating image.
 	metadata := make(map[string]any)
-	imageProgressWriter := &ioprogress.ProgressWriter{
+	metaProgressWriter := &ioprogress.ProgressWriter{
 		Tracker: &ioprogress.ProgressTracker{
 			Handler: func(value, speed int64) {
 				percent := int64(0)
@@ -285,9 +297,30 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 		},
 	}
 
-	sha256 := sha256.New()
+	rootfsProgressWriter := &ioprogress.ProgressWriter{
+		Tracker: &ioprogress.ProgressTracker{
+			Handler: func(value, speed int64) {
+				percent := int64(0)
+				var processed int64
+
+				if totalSize > 0 {
+					percent = value
+					processed = totalSize * (percent / 100.0)
+				} else {
+					processed = value
+				}
+
+				operations.SetProgressMetadata(metadata, "create_image_from_container_pack", "Image pack", percent, processed, speed)
+				_ = op.UpdateMetadata(metadata)
+			},
+			Length: totalSize,
+		},
+	}
+
+	hash256 := sha256.New()
 	var compress string
-	var writer io.Writer
+	var metaWriter io.Writer
+	var rootfsWriter io.Writer
 
 	if req.CompressionAlgorithm != "" {
 		compress = req.CompressionAlgorithm
@@ -320,21 +353,52 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 	if compress != "none" {
 		wg.Add(1)
 		tarReader, tarWriter := io.Pipe()
-		imageProgressWriter.WriteCloser = tarWriter
-		writer = imageProgressWriter
-		compressWriter := io.MultiWriter(imageFile, sha256)
+
+		metaProgressWriter.WriteCloser = tarWriter
+		metaWriter = metaProgressWriter
+
+		var compressWriter io.Writer
+		if imageType != "split" {
+			compressWriter = io.MultiWriter(metaFile, hash256)
+		} else {
+			compressWriter = io.MultiWriter(metaFile)
+		}
+
 		go func() {
 			defer wg.Done()
 			compressErr = compressFile(compress, tarReader, compressWriter)
 
 			// If a compression error occurred, close the writer to end the instance export.
 			if compressErr != nil {
-				_ = imageProgressWriter.Close()
+				_ = metaProgressWriter.Close()
 			}
 		}()
 	} else {
-		imageProgressWriter.WriteCloser = imageFile
-		writer = io.MultiWriter(imageProgressWriter, sha256)
+		metaProgressWriter.WriteCloser = metaFile
+		if imageType != "split" {
+			metaWriter = io.MultiWriter(metaProgressWriter, hash256)
+		} else {
+			metaWriter = io.MultiWriter(metaProgressWriter)
+		}
+	}
+	if compress != "none" && c.Info().Type.String() != "virtual-machine" {
+		wg.Add(1)
+		tarReader, tarWriter := io.Pipe()
+		rootfsProgressWriter.WriteCloser = tarWriter
+		rootfsWriter = rootfsProgressWriter
+		compressWriter := io.MultiWriter(rootfsFile)
+
+		go func() {
+			defer wg.Done()
+			compressErr = compressFile(compress, tarReader, compressWriter)
+			// If a compression error occurred, close the writer to end the instance export.
+			if compressErr != nil {
+				_ = rootfsProgressWriter.Close()
+			}
+		}()
+	} else {
+		rootfsProgressWriter.WriteCloser = rootfsFile
+		rootfsWriter = io.MultiWriter(rootfsProgressWriter)
 	}
 
 	// Tracker instance for the export phase.
@@ -348,15 +412,22 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 	// Export instance to writer.
 	var meta *api.ImageMetadata
 
-	writer = internalIO.NewQuotaWriter(writer, budget)
-	meta, err = c.Export(writer, req.Properties, req.ExpiresAt, tracker)
+	metaWriter = internalIO.NewQuotaWriter(metaWriter, budget)
+	rootfsWriter = internalIO.NewQuotaWriter(rootfsWriter, budget)
+	if imageType != "split" {
+		meta, err = c.Export(metaWriter, nil, req.Properties, req.ExpiresAt, tracker)
+	} else {
+		meta, err = c.Export(metaWriter, rootfsWriter, req.Properties, req.ExpiresAt, tracker)
+	}
 
 	// Clean up file handles.
 	// When compression is used, Close on imageProgressWriter/tarWriter is required for compressFile/gzip to
 	// know it is finished. Otherwise it is equivalent to imageFile.Close.
-	_ = imageProgressWriter.Close()
+	_ = metaProgressWriter.Close()
+	_ = rootfsProgressWriter.Close()
 	wg.Wait() // Wait until compression helper has finished if used.
-	_ = imageFile.Close()
+	_ = metaFile.Close()
+	_ = rootfsFile.Close()
 
 	// Check compression errors.
 	if compressErr != nil {
@@ -373,13 +444,37 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 		info.ExpiresAt = time.Unix(meta.ExpiryDate, 0)
 	}
 
-	fi, err := os.Stat(imageFile.Name())
+	fi, err := os.Stat(metaFile.Name())
 	if err != nil {
 		return nil, err
 	}
 
 	info.Size = fi.Size()
-	info.Fingerprint = fmt.Sprintf("%x", sha256.Sum(nil))
+	// Make sure both files are included for size and hash when using split format
+	if imageType == "split" {
+		rootfsFi, err := os.Stat(rootfsFile.Name())
+		if err != nil {
+			return nil, err
+		}
+
+		info.Size += rootfsFi.Size()
+
+		metaData, err := os.ReadFile(metaFile.Name())
+		if err != nil {
+			return nil, err
+		}
+
+		hash256.Write(metaData)
+
+		rootfsData, err := os.ReadFile(rootfsFile.Name())
+		if err != nil {
+			return nil, err
+		}
+
+		hash256.Write(rootfsData)
+	}
+
+	info.Fingerprint = fmt.Sprintf("%x", hash256.Sum(nil))
 	info.CreatedAt = time.Now().UTC()
 
 	err = s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
@@ -396,10 +491,18 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 	}
 
 	/* rename the file to the expected name so our caller can use it */
-	finalName := internalUtil.VarPath("images", info.Fingerprint)
-	err = internalUtil.FileMove(imageFile.Name(), finalName)
+	metaFinalName := internalUtil.VarPath("images", info.Fingerprint)
+	err = internalUtil.FileMove(metaFile.Name(), metaFinalName)
 	if err != nil {
 		return nil, err
+	}
+
+	if imageType == "split" {
+		rootfsFinalName := internalUtil.VarPath("images", info.Fingerprint+".rootfs")
+		err = internalUtil.FileMove(rootfsFile.Name(), rootfsFinalName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	info.Architecture, _ = osarch.ArchitectureName(c.Architecture())
@@ -602,7 +705,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 		ctype = "application/octet-stream"
 	}
 
-	sha256 := sha256.New()
+	hash256 := sha256.New()
 	var size int64
 
 	if ctype == "multipart/form-data" {
@@ -632,7 +735,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 			return nil, fmt.Errorf("Invalid multipart image")
 		}
 
-		size, err = io.Copy(io.MultiWriter(imageTarf, sha256), part)
+		size, err = io.Copy(io.MultiWriter(imageTarf, hash256), part)
 		info.Size += size
 
 		_ = imageTarf.Close()
@@ -665,7 +768,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 
 		defer func() { _ = os.Remove(rootfsTarf.Name()) }()
 
-		size, err = io.Copy(io.MultiWriter(rootfsTarf, sha256), part)
+		size, err = io.Copy(io.MultiWriter(rootfsTarf, hash256), part)
 		info.Size += size
 
 		_ = rootfsTarf.Close()
@@ -675,7 +778,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 		}
 
 		info.Filename = part.FileName()
-		info.Fingerprint = fmt.Sprintf("%x", sha256.Sum(nil))
+		info.Fingerprint = fmt.Sprintf("%x", hash256.Sum(nil))
 
 		expectedFingerprint := r.Header.Get("X-Incus-fingerprint")
 		if expectedFingerprint != "" && info.Fingerprint != expectedFingerprint {
@@ -716,7 +819,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 			return nil, err
 		}
 
-		size, err = io.Copy(sha256, post)
+		size, err = io.Copy(hash256, post)
 		if err != nil {
 			l.Error("Failed to copy the tarfile", logger.Ctx{"err": err})
 			return nil, err
@@ -725,7 +828,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 		info.Size = size
 
 		info.Filename = r.Header.Get("X-Incus-filename")
-		info.Fingerprint = fmt.Sprintf("%x", sha256.Sum(nil))
+		info.Fingerprint = fmt.Sprintf("%x", hash256.Sum(nil))
 
 		expectedFingerprint := r.Header.Get("X-Incus-fingerprint")
 		if expectedFingerprint != "" && info.Fingerprint != expectedFingerprint {
@@ -1036,11 +1139,6 @@ func imagesPost(d *Daemon, r *http.Request) response.Response {
 		}
 	}
 
-	instanceType, err := urlInstanceTypeDetect(r)
-	if err != nil {
-		return response.SmartError(err)
-	}
-
 	// create a directory under which we keep everything while building
 	builddir, err := os.MkdirTemp(internalUtil.VarPath("images"), "incus_build_")
 	if err != nil {
@@ -1131,7 +1229,7 @@ func imagesPost(d *Daemon, r *http.Request) response.Response {
 			}
 
 			r.Body = post
-			resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, name, instanceType)
+			resp, err := forwardedResponseIfInstanceIsRemote(s, r, projectName, name)
 			if err != nil {
 				cleanup(builddir, post)
 				return response.SmartError(err)
@@ -1873,7 +1971,7 @@ func autoUpdateImages(ctx context.Context, s *state.State) error {
 			if err != nil {
 				logger.Error("Failed to update image", logger.Ctx{"err": err, "project": image.Project, "fingerprint": image.Fingerprint})
 
-				if err == context.Canceled {
+				if errors.Is(err, context.Canceled) {
 					return nil
 				}
 			} else {
@@ -1893,7 +1991,7 @@ func autoUpdateImages(ctx context.Context, s *state.State) error {
 				if err != nil {
 					logger.Error("Failed to distribute new image", logger.Ctx{"err": err, "fingerprint": newImage.Fingerprint})
 
-					if err == context.Canceled {
+					if errors.Is(err, context.Canceled) {
 						return nil
 					}
 				}

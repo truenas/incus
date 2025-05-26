@@ -25,6 +25,7 @@ import (
 	"github.com/lxc/incus/v6/internal/server/ip"
 	"github.com/lxc/incus/v6/internal/server/network"
 	"github.com/lxc/incus/v6/internal/server/network/acl"
+	addressset "github.com/lxc/incus/v6/internal/server/network/address-set"
 	"github.com/lxc/incus/v6/internal/server/network/ovn"
 	"github.com/lxc/incus/v6/internal/server/project"
 	"github.com/lxc/incus/v6/internal/server/resources"
@@ -86,29 +87,184 @@ func (d *nicOVN) validateConfig(instConf instance.ConfigReader) error {
 	}
 
 	requiredFields := []string{
+		// gendoc:generate(entity=devices, group=nic_ovn, key=network)
+		//
+		// ---
+		//  type: string
+		//  managed: yes
+		//  shortdesc: The managed network to link the device to (required)
 		"network",
 	}
 
 	optionalFields := []string{
+		// gendoc:generate(entity=devices, group=nic_ovn, key=name)
+		//
+		// ---
+		//  type: string
+		//  default: kernel assigned
+		//  managed: no
+		//  shortdesc: The name of the interface inside the instance
 		"name",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=hwaddr)
+		//
+		// ---
+		//  type: string
+		//  default: randomly assigned
+		//  managed: no
+		//  shortdesc: The MAC address of the new interface
 		"hwaddr",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=host_name)
+		//
+		// ---
+		//  type: string
+		//  default: randomly assigned
+		//  managed: no
+		//  shortdesc: The name of the interface inside the host
 		"host_name",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=mtu)
+		//
+		// ---
+		//  type: integer
+		//  default: MTU of the parent network
+		//  managed: yes
+		//  shortdesc: The Maximum Transmit Unit (MTU) of the new interface
 		"mtu",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=ipv4.address)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: An IPv4 address to assign to the instance through DHCP, `none` can be used to disable IP allocation
 		"ipv4.address",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=ipv6.address)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: An IPv6 address to assign to the instance through DHCP, `none` can be used to disable IP allocation
 		"ipv6.address",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=ipv4.routes)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: Comma-delimited list of IPv4 static routes to route to the NIC
 		"ipv4.routes",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=ipv6.routes)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: Comma-delimited list of IPv6 static routes to route to the NIC
 		"ipv6.routes",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=ipv4.routes.external)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: Comma-delimited list of IPv4 static routes to route to the NIC and publish on uplink network
 		"ipv4.routes.external",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=ipv6.routes.external)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: Comma-delimited list of IPv6 static routes to route to the NIC and publish on uplink network
 		"ipv6.routes.external",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=boot.priority)
+		//
+		// ---
+		//  type: integer
+		//  managed: no
+		//  shortdesc: Boot priority for VMs (higher value boots first)
 		"boot.priority",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=security.acls)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: Comma-separated list of network ACLs to apply
 		"security.acls",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=security.acls.default.ingress.action)
+		//
+		// ---
+		//  type: string
+		//  default: reject
+		//  managed: no
+		//  shortdesc: Action to use for ingress traffic that doesn't match any ACL rule
 		"security.acls.default.ingress.action",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=security.acls.default.egress.action)
+		//
+		// ---
+		//  type: string
+		//  default: reject
+		//  managed: no
+		//  shortdesc: Action to use for egress traffic that doesn't match any ACL rule
 		"security.acls.default.egress.action",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=security.acls.default.ingress.logged)
+		//
+		// ---
+		//  type: bool
+		//  default: false
+		//  managed: no
+		//  shortdesc: Whether to log ingress traffic that doesn't match any ACL rule
 		"security.acls.default.ingress.logged",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=security.acls.default.egress.logged)
+		//
+		// ---
+		//  type: bool
+		//  default: false
+		//  managed: no
+		//  shortdesc: Whether to log egress traffic that doesn't match any ACL rule
 		"security.acls.default.egress.logged",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=security.promiscuous)
+		//
+		// ---
+		//  type: bool
+		//  default: false
+		//  managed: no
+		//  shortdesc: Have OVN send unknown network traffic to this network interface (required for some nesting cases)
 		"security.promiscuous",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=acceleration)
+		//
+		// ---
+		//  type: string
+		//  default: none
+		//  managed: no
+		//  shortdesc: Enable hardware offloading (either `none`, `sriov` or `vdpa`)
 		"acceleration",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=nested)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: The parent NIC name to nest this NIC under (see also `vlan`)
 		"nested",
+
+		// gendoc:generate(entity=devices, group=nic_ovn, key=vlan)
+		//
+		// ---
+		//  type: integer
+		//  managed: no
+		//  shortdesc: The VLAN ID to use when nesting (see also `nested`)
 		"vlan",
 	}
 
@@ -429,8 +585,8 @@ func (d *nicOVN) Start() (*deviceConfig.RunConfig, error) {
 		return nil, err
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	saveData := make(map[string]string)
 	saveData["host_name"] = d.config["host_name"]
@@ -497,13 +653,13 @@ func (d *nicOVN) Start() (*deviceConfig.RunConfig, error) {
 			}
 
 			// Claim the SR-IOV virtual function (VF) on the parent (PF) and get the PCI information.
-			vfPCIDev, pciIOMMUGroup, err = networkSRIOVSetupVF(d.deviceCommon, vfParent, vfDev, vfID, false, saveData)
+			vfPCIDev, pciIOMMUGroup, err = networkSRIOVSetupVF(d.deviceCommon, vfParent, vfDev, vfID, saveData)
 			if err != nil {
 				network.SRIOVVirtualFunctionMutex.Unlock()
 				return nil, fmt.Errorf("Failed setting up VF: %w", err)
 			}
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				_ = networkSRIOVRestoreVF(d.deviceCommon, false, saveData)
 			})
 
@@ -558,13 +714,13 @@ func (d *nicOVN) Start() (*deviceConfig.RunConfig, error) {
 			}
 
 			// Claim the SR-IOV virtual function (VF) on the parent (PF) and get the PCI information.
-			vfPCIDev, pciIOMMUGroup, err = networkSRIOVSetupVF(d.deviceCommon, vfParent, vfDev, vfID, false, saveData)
+			vfPCIDev, pciIOMMUGroup, err = networkSRIOVSetupVF(d.deviceCommon, vfParent, vfDev, vfID, saveData)
 			if err != nil {
 				network.SRIOVVirtualFunctionMutex.Unlock()
 				return nil, err
 			}
 
-			revert.Add(func() {
+			reverter.Add(func() {
 				_ = networkSRIOVRestoreVF(d.deviceCommon, false, saveData)
 			})
 
@@ -615,7 +771,7 @@ func (d *nicOVN) Start() (*deviceConfig.RunConfig, error) {
 				}
 			}
 
-			revert.Add(func() { _ = network.InterfaceRemove(saveData["host_name"]) })
+			reverter.Add(func() { _ = network.InterfaceRemove(saveData["host_name"]) })
 		}
 	}
 
@@ -661,7 +817,7 @@ func (d *nicOVN) Start() (*deviceConfig.RunConfig, error) {
 
 	saveData["last_state.ip_addresses"] = dnsIPsStr.String()
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = d.network.InstanceDevicePortStop("", &network.OVNInstanceNICStopOpts{
 			InstanceUUID: d.inst.LocalConfig()["volatile.uuid"],
 			DeviceName:   d.name,
@@ -676,7 +832,7 @@ func (d *nicOVN) Start() (*deviceConfig.RunConfig, error) {
 			return nil, err
 		}
 
-		revert.Add(cleanup)
+		reverter.Add(cleanup)
 	}
 
 	runConf := deviceConfig.RunConfig{}
@@ -758,7 +914,8 @@ func (d *nicOVN) Start() (*deviceConfig.RunConfig, error) {
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return &runConf, nil
 }
 
@@ -807,6 +964,12 @@ func (d *nicOVN) Update(oldDevices deviceConfig.Devices, isRunning bool) error {
 			}
 		}
 
+		// Setup address sets for new ACLs
+		_, err := addressset.OVNEnsureAddressSetsViaACLs(d.state, d.logger, d.ovnnb, d.network.Project(), newACLs)
+		if err != nil {
+			return fmt.Errorf("Failed removing unused OVN address sets: %w", err)
+		}
+
 		// Setup the logical port with new ACLs if running.
 		if isRunning {
 			// Load uplink network config.
@@ -843,7 +1006,12 @@ func (d *nicOVN) Update(oldDevices deviceConfig.Devices, isRunning bool) error {
 		}
 
 		if len(removedACLs) > 0 {
-			err := acl.OVNPortGroupDeleteIfUnused(d.state, d.logger, d.ovnnb, d.network.Project(), d.inst, d.name, newACLs...)
+			err := addressset.OVNDeleteAddressSetsViaACLs(d.state, d.logger, d.ovnnb, d.network.Project(), removedACLs)
+			if err != nil {
+				return fmt.Errorf("Failed removing unused OVN address sets: %w", err)
+			}
+
+			err = acl.OVNPortGroupDeleteIfUnused(d.state, d.logger, d.ovnnb, d.network.Project(), d.inst, d.name, newACLs...)
 			if err != nil {
 				return fmt.Errorf("Failed removing unused OVN port groups: %w", err)
 			}
@@ -1204,8 +1372,8 @@ func (d *nicOVN) Register() error {
 }
 
 func (d *nicOVN) setupHostNIC(hostName string, ovnPortName ovn.OVNSwitchPort) (revert.Hook, error) {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Disable IPv6 on host-side veth interface (prevents host-side interface getting link-local address and
 	// accepting router advertisements) as not needed because the host-side interface is connected to a bridge.
@@ -1233,7 +1401,7 @@ func (d *nicOVN) setupHostNIC(hostName string, ovnPortName ovn.OVNSwitchPort) (r
 		return nil, err
 	}
 
-	revert.Add(func() { _ = vswitch.DeleteBridgePort(context.TODO(), integrationBridge, hostName) })
+	reverter.Add(func() { _ = vswitch.DeleteBridgePort(context.TODO(), integrationBridge, hostName) })
 
 	// Link OVS port to OVN logical port.
 	err = vswitch.AssociateInterfaceOVNSwitchPort(context.TODO(), hostName, string(ovnPortName))
@@ -1248,7 +1416,8 @@ func (d *nicOVN) setupHostNIC(hostName string, ovnPortName ovn.OVNSwitchPort) (r
 		return nil, fmt.Errorf("Failed to bring up the host interface %s: %w", hostName, err)
 	}
 
-	cleanup := revert.Clone().Fail
-	revert.Success()
+	cleanup := reverter.Clone().Fail
+	reverter.Success()
+
 	return cleanup, err
 }

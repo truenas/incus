@@ -151,7 +151,7 @@ func (c *cmdClusterList) Command() *cobra.Command {
     m - Message`))
 
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultClusterColumns, i18n.G("Columns")+"``")
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().BoolVar(&c.flagAllProjects, "all-projects", false, i18n.G("Display clusters from all projects"))
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -705,7 +705,7 @@ type cmdClusterRemove struct {
 func (c *cmdClusterRemove) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("remove", i18n.G("[<remote>:]<member>"))
-	cmd.Aliases = []string{"rm"}
+	cmd.Aliases = []string{"delete", "rm"}
 	cmd.Short = i18n.G("Remove a member from the cluster")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Remove a member from the cluster`))
@@ -1117,7 +1117,7 @@ Pre-defined column shorthand chars:
   n - Name
   t - Token
   E - Expires At`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable if demanded, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable if demanded, e.g. csv,header`)+"``")
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultclusterTokensColumns, i18n.G("Columns")+"``")
 
 	cmd.RunE = c.Run

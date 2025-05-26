@@ -43,15 +43,90 @@ func (d *nicMACVLAN) validateConfig(instConf instance.ConfigReader) error {
 
 	var requiredFields []string
 	optionalFields := []string{
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=name)
+		//
+		// ---
+		//  type: string
+		//  default: kernel assigned
+		//  managed: no
+		//  shortdesc: The name of the interface inside the instance
 		"name",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=network)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: The managed network to link the device to (instead of specifying the `nictype` directly)
 		"network",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=parent)
+		//
+		// ---
+		//  type: string
+		//  managed: yes
+		//  shortdesc: The name of the parent host device (required if specifying the `nictype` directly)
 		"parent",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=mtu)
+		//
+		// ---
+		//  type: integer
+		//  default: MTU of the parent device
+		//  managed: yes
+		//  shortdesc: The Maximum Transmit Unit (MTU) of the new interface
 		"mtu",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=hwaddr)
+		//
+		// ---
+		//  type: string
+		//  default: randomly assigned
+		//  managed: no
+		//  shortdesc: The MAC address of the new interface
 		"hwaddr",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=vlan)
+		//
+		// ---
+		//  type: integer
+		//  managed: no
+		//  shortdesc: The VLAN ID to attach to
 		"vlan",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=boot.priority)
+		//
+		// ---
+		//  type: integer
+		//  managed: no
+		//  shortdesc: Boot priority for VMs (higher value boots first)
 		"boot.priority",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=gvrp)
+		//
+		// ---
+		//  type: bool
+		//  default: false
+		//  managed: no
+		//  shortdesc: Register VLAN using GARP VLAN Registration Protocol
 		"gvrp",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=mode)
+		//
+		// ---
+		//  type: string
+		//  default: bridge
+		//  managed: no
+		//  shortdesc: Macvlan mode (one of `bridge`, `vepa`, `passthru` or `private`)
 		"mode",
+
+		// gendoc:generate(entity=devices, group=nic_macvlan, key=io.bus)
+		//
+		// ---
+		//  type: string
+		//  default: `virtio`
+		//  managed: no
+		//  shortdesc: Override the bus for the device (can be `virtio` or `usb`) (VM only)
 		"io.bus",
 	}
 
@@ -147,8 +222,8 @@ func (d *nicMACVLAN) Start() (*deviceConfig.RunConfig, error) {
 	networkCreateSharedDeviceLock.Lock()
 	defer networkCreateSharedDeviceLock.Unlock()
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	saveData := make(map[string]string)
 
@@ -171,7 +246,7 @@ func (d *nicMACVLAN) Start() (*deviceConfig.RunConfig, error) {
 	saveData["last_state.created"] = fmt.Sprintf("%t", statusDev != "existing")
 
 	if util.IsTrue(saveData["last_state.created"]) {
-		revert.Add(func() {
+		reverter.Add(func() {
 			_ = networkRemoveInterfaceIfNeeded(d.state, actualParentName, d.inst, d.config["parent"], d.config["vlan"])
 		})
 	}
@@ -242,7 +317,7 @@ func (d *nicMACVLAN) Start() (*deviceConfig.RunConfig, error) {
 		}
 	}
 
-	revert.Add(func() { _ = network.InterfaceRemove(saveData["host_name"]) })
+	reverter.Add(func() { _ = network.InterfaceRemove(saveData["host_name"]) })
 
 	if d.inst.Type() == instancetype.VM {
 		// Disable IPv6 on host interface to avoid getting IPv6 link-local addresses unnecessarily.
@@ -278,7 +353,8 @@ func (d *nicMACVLAN) Start() (*deviceConfig.RunConfig, error) {
 			}...)
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return &runConf, nil
 }
 

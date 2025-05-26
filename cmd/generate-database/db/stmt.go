@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"slices"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -141,7 +142,9 @@ func (s *Stmt) objects(buf *file.Buffer) error {
 			return err
 		}
 
-		joins = append(joins, join)
+		if !slices.Contains(joins, join) {
+			joins = append(joins, join)
+		}
 	}
 
 	table += strings.Join(joins, "")
@@ -310,8 +313,11 @@ func (s *Stmt) namesBy(buf *file.Buffer) error {
 				return err
 			}
 
-			joins = append(joins, join)
-			column = field.JoinConfig()
+			if !slices.Contains(joins, join) {
+				joins = append(joins, join)
+			}
+
+			column = field.joinConfig()
 		} else {
 			column = mapping.FieldColumnName(field.Name, tableName)
 		}
@@ -403,10 +409,13 @@ func (s *Stmt) id(buf *file.Buffer) error {
 
 		var column string
 		if field.IsScalar() {
-			column = field.JoinConfig()
+			column = field.joinConfig()
 
 			join, err := field.JoinClause(mapping, table)
-			joins = append(joins, join)
+			if !slices.Contains(joins, join) {
+				joins = append(joins, join)
+			}
+
 			if err != nil {
 				return err
 			}

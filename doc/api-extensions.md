@@ -2775,3 +2775,39 @@ This introduces a set of new configuration options on the container to configure
 * `oci.gid`
 
 Those are initialized at creation time using the values from the OCI image.
+
+## `network_address_set`
+
+This adds the concept of network address sets to API under the API endpoint prefix `/1.0/network-address-sets`.
+
+## `server_logging`
+
+This implements a new set of `logging` configuration keys on the server, allowing for multiple logging targets.
+The former `loki` configuration keys are being transitioned over as part of this.
+
+## `network_forward_snat`
+
+Adds a `snat` configuration option for network forwards which will cause any DNAT to get a matching SNAT applied.
+So new connections from the target will appear as coming from the network forward address.
+
+This is limited to bridged networks as OVN doesn't support flexible enough SNAT for this.
+
+## `memory_hotplug`
+
+This adds memory hotplugging for VMs, allowing them to add memory at runtime without rebooting.
+
+## `instance_nic_routed_host_tables`
+
+This adds support for specifying host-routing tables on `nic` devices that use the routed mode.
+
+## `instance_publish_split`
+
+This adds support for creating a split format image out of an existing instance.
+
+## `init_preseed_certificates`
+
+This API extension provides the ability to configure certificates in preseed init.
+
+## `custom_volume_sftp`
+
+This adds the SFTP API to custom storage volumes.

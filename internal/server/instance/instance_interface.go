@@ -64,6 +64,7 @@ type ConfigReader interface {
 	Type() instancetype.Type
 	Architecture() int
 	ID() int
+	Name() string
 
 	ExpandedConfig() map[string]string
 	ExpandedDevices() deviceConfig.Devices
@@ -102,7 +103,7 @@ type Instance interface {
 	Update(newConfig db.InstanceArgs, userRequested bool) error
 
 	Delete(force bool) error
-	Export(w io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (*api.ImageMetadata, error)
+	Export(meta io.Writer, roofs io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (*api.ImageMetadata, error)
 
 	// Live configuration.
 	CGroup() (*cgroup.CGroup, error)
@@ -117,7 +118,8 @@ type Instance interface {
 	Exec(req api.InstanceExecPost, stdin *os.File, stdout *os.File, stderr *os.File) (Cmd, error)
 
 	// Status
-	Render(options ...func(response any) error) (any, any, error)
+	Render() (any, any, error)
+	RenderWithUsage() (any, any, error)
 	RenderFull(hostInterfaces []net.Interface) (*api.InstanceFull, any, error)
 	RenderState(hostInterfaces []net.Interface) (*api.InstanceState, error)
 	IsRunning() bool
@@ -133,7 +135,6 @@ type Instance interface {
 
 	// Properties.
 	Location() string
-	Name() string
 	CloudInitID() string
 	Description() string
 	CreationDate() time.Time

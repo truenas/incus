@@ -73,6 +73,7 @@ import (
 	"github.com/lxc/incus/v6/internal/server/template"
 	localUtil "github.com/lxc/incus/v6/internal/server/util"
 	internalUtil "github.com/lxc/incus/v6/internal/util"
+	"github.com/lxc/incus/v6/internal/version"
 	"github.com/lxc/incus/v6/shared/api"
 	"github.com/lxc/incus/v6/shared/idmap"
 	"github.com/lxc/incus/v6/shared/ioprogress"
@@ -168,8 +169,8 @@ func lxcStatusCode(state liblxc.State) api.StatusCode {
 // lxcCreate creates the DB storage records and sets up instance devices.
 // Returns a revert fail function that can be used to undo this function if a subsequent step fails.
 func lxcCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operations.Operation) (instance.Instance, revert.Hook, error) {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Create the container struct
 	d := &lxc{
@@ -314,7 +315,7 @@ func lxcCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operatio
 			return nil, nil, err
 		}
 
-		revert.Add(cleanup)
+		reverter.Add(cleanup)
 	}
 
 	if d.isSnapshot {
@@ -332,7 +333,7 @@ func lxcCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operatio
 			logger.Error("Failed to add instance to authorizer", logger.Ctx{"instanceName": d.Name(), "projectName": d.project.Name, "error": err})
 		}
 
-		revert.Add(func() { d.state.Authorizer.DeleteInstance(d.state.ShutdownCtx, d.project.Name, d.Name()) })
+		reverter.Add(func() { _ = d.state.Authorizer.DeleteInstance(d.state.ShutdownCtx, d.project.Name, d.Name()) })
 
 		d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceCreated.Event(d, map[string]any{
 			"type":         api.InstanceTypeContainer,
@@ -341,8 +342,9 @@ func lxcCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operatio
 		}))
 	}
 
-	cleanup := revert.Clone().Fail
-	revert.Success()
+	cleanup := reverter.Clone().Fail
+	reverter.Success()
+
 	return d, cleanup, err
 }
 
@@ -485,7 +487,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 
 		for _, ent := range rawMaps.Entries {
 			err := set.AddSafe(ent)
-			if err != nil && err == idmap.ErrHostIDIsSubID {
+			if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
 				return nil, err
 			}
 		}
@@ -517,7 +519,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 		// Apply the raw idmap entries.
 		for _, ent := range rawMaps.Entries {
 			err := newIdmapset.AddSafe(ent)
-			if err != nil && err == idmap.ErrHostIDIsSubID {
+			if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
 				return nil, 0, err
 			}
 		}
@@ -537,7 +539,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 		}
 
 		set, err := mkIdmap(offset, size)
-		if err != nil && err == idmap.ErrHostIDIsSubID {
+		if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
 			return nil, 0, err
 		}
 
@@ -600,7 +602,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 			}
 
 			set, err := mkIdmap(offset, size)
-			if err != nil && err == idmap.ErrHostIDIsSubID {
+			if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
 				return nil, 0, err
 			}
 
@@ -615,7 +617,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 		offset = mapentries.Entries[i-1].HostID + mapentries.Entries[i-1].MapRange
 		if offset+size < mapentries.Entries[i].HostID {
 			set, err := mkIdmap(offset, size)
-			if err != nil && err == idmap.ErrHostIDIsSubID {
+			if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
 				return nil, 0, err
 			}
 
@@ -627,7 +629,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 
 	if offset+size <= d.state.OS.IdmapSet.Entries[0].HostID+d.state.OS.IdmapSet.Entries[0].MapRange {
 		set, err := mkIdmap(offset, size)
-		if err != nil && err == idmap.ErrHostIDIsSubID {
+		if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
 			return nil, 0, err
 		}
 
@@ -670,8 +672,8 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 	// cleaned up (if needed) when the garbage collector destroys this instance struct.
 	d.cFinalizer.Do(func() { runtime.SetFinalizer(d, lxcUnload) })
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Load the go-lxc struct
 	cname := project.Instance(d.Project().Name, d.Name())
@@ -680,7 +682,7 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 		return nil, err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = cc.Release()
 	})
 
@@ -751,7 +753,7 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 
 		d.c = cc
 
-		revert.Success()
+		reverter.Success()
 		return cc, err
 	}
 
@@ -1338,7 +1340,8 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 	}
 
 	d.c = cc
-	revert.Success()
+	reverter.Success()
+
 	return cc, err
 }
 
@@ -1418,8 +1421,8 @@ func (d *lxc) deviceStart(dev device.Device, instanceRunning bool) (*deviceConfi
 	l := d.logger.AddContext(logger.Ctx{"device": dev.Name(), "type": configCopy["type"]})
 	l.Debug("Starting device")
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	if instanceRunning && !dev.CanHotPlug() {
 		return nil, fmt.Errorf("Device cannot be started when instance is running")
@@ -1430,7 +1433,7 @@ func (d *lxc) deviceStart(dev device.Device, instanceRunning bool) (*deviceConfi
 		return nil, err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		runConf, _ := dev.Stop()
 		if runConf != nil {
 			_ = d.runHooks(runConf.PostHooks)
@@ -1483,7 +1486,8 @@ func (d *lxc) deviceStart(dev device.Device, instanceRunning bool) (*deviceConfi
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return runConf, nil
 }
 
@@ -1919,8 +1923,8 @@ func (d *lxc) handleIdmappedStorage() (idmap.StorageType, *idmap.Set, error) {
 func (d *lxc) startCommon() (string, []func() error, error) {
 	postStartHooks := []func() error{}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Assign NUMA node(s) if needed.
 	if d.expandedConfig["limits.cpu.nodes"] == "balanced" {
@@ -2036,7 +2040,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		return nil
 	})
 
-	revert.Add(func() { _ = d.unmount() })
+	reverter.Add(func() { _ = d.unmount() })
 
 	idmapType, nextIdmap, err := d.handleIdmappedStorage()
 	if err != nil {
@@ -2141,7 +2145,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		}
 
 		// Stop device on failure to setup container.
-		revert.Add(func() {
+		reverter.Add(func() {
 			err := d.deviceStop(dev, false, "")
 			if err != nil {
 				d.logger.Error("Failed to cleanup device", logger.Ctx{"device": dev.Name(), "err": err})
@@ -2153,7 +2157,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		}
 
 		if runConf.Revert != nil {
-			revert.Add(runConf.Revert)
+			reverter.Add(runConf.Revert)
 		}
 
 		// Process rootfs setup.
@@ -2315,26 +2319,29 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 			volatileSet["volatile.container.oci"] = "true"
 		}
 
-		// Allow unprivileged users to use ping.
-		maxGid := int64(4294967294)
+		// Allow unprivileged users to use ping (requires a 6.6 kernel at least).
+		minVer, _ := version.NewDottedVersion("6.6.0")
+		if d.state.OS.KernelVersion.Compare(minVer) >= 0 {
+			maxGid := int64(4294967294)
 
-		if !d.IsPrivileged() {
-			maxGid = 0
-			idMap, err := d.CurrentIdmap()
+			if !d.IsPrivileged() {
+				maxGid = 0
+				idMap, err := d.CurrentIdmap()
+				if err != nil {
+					return "", nil, err
+				}
+
+				for _, entry := range idMap.Entries {
+					if entry.NSID+entry.MapRange-1 > maxGid {
+						maxGid = entry.NSID + entry.MapRange - 1
+					}
+				}
+			}
+
+			err = lxcSetConfigItem(cc, "lxc.sysctl.net.ipv4.ping_group_range", fmt.Sprintf("0 %d", maxGid))
 			if err != nil {
 				return "", nil, err
 			}
-
-			for _, entry := range idMap.Entries {
-				if entry.NSID+entry.MapRange-1 > maxGid {
-					maxGid = entry.NSID + entry.MapRange - 1
-				}
-			}
-		}
-
-		err = lxcSetConfigItem(cc, "lxc.sysctl.net.ipv4.ping_group_range", fmt.Sprintf("0 %d", maxGid))
-		if err != nil {
-			return "", nil, err
 		}
 
 		// Allow unprivileged users to use low ports.
@@ -2495,7 +2502,23 @@ ff02::2 ip6-allrouters
 			return "", nil, err
 		}
 
-		err = lxcSetConfigItem(cc, "lxc.hook.start-host", fmt.Sprintf("/proc/%d/exe forknet dhcp %s", os.Getpid(), filepath.Join(d.Path(), "network")))
+		forknetDhcpLogfilePath := filepath.Join(d.LogPath(), "forknet-dhcp.log")
+		forknetDhcpLogfile, err := os.Create(forknetDhcpLogfilePath)
+		if err != nil {
+			return "", nil, err
+		}
+
+		err = forknetDhcpLogfile.Close()
+		if err != nil {
+			return "", nil, err
+		}
+
+		err = lxcSetConfigItem(cc, "lxc.hook.start-host", fmt.Sprintf(
+			"/proc/%d/exe forknet dhcp %s %s",
+			os.Getpid(),
+			filepath.Join(d.Path(), "network"),
+			forknetDhcpLogfilePath,
+		))
 		if err != nil {
 			return "", nil, err
 		}
@@ -2637,7 +2660,8 @@ ff02::2 ip6-allrouters
 		return "", nil, err
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return configPath, postStartHooks, nil
 }
 
@@ -2797,7 +2821,7 @@ func (d *lxc) Start(stateful bool) error {
 
 	_, ok := envDict["PATH"]
 	if !ok {
-		envDict["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		envDict["PATH"] = os.Getenv("PATH")
 	}
 
 	env := make([]string, 0, len(envDict))
@@ -2921,7 +2945,7 @@ func (d *lxc) onStart(_ map[string]string) error {
 	}
 
 	// Trigger a rebalance
-	cgroup.TaskSchedulerTrigger("container", d.name, "started")
+	defer cgroup.TaskSchedulerTrigger("container", d.name, "started")
 
 	// Record last start state.
 	err = d.recordLastState()
@@ -3390,7 +3414,7 @@ func (d *lxc) onStop(args map[string]string) error {
 
 			// Stop LXCFS.
 			err = lxcfs.Stop()
-			if err != nil && err != subprocess.ErrNotRunning {
+			if err != nil && !errors.Is(err, subprocess.ErrNotRunning) {
 				op.Done(fmt.Errorf("Failed to stop LXCFS: %w", err))
 				return
 			}
@@ -3444,7 +3468,7 @@ func (d *lxc) onStop(args map[string]string) error {
 		}
 
 		// Trigger a rebalance
-		cgroup.TaskSchedulerTrigger("container", d.name, "stopped")
+		defer cgroup.TaskSchedulerTrigger("container", d.name, "stopped")
 
 		// Destroy ephemeral containers
 		if d.ephemeral {
@@ -3621,8 +3645,38 @@ func (d *lxc) getLxcState() (liblxc.State, error) {
 	}
 }
 
+// RenderWithUsage renders the API response including disk usage.
+func (d *lxc) RenderWithUsage() (any, any, error) {
+	resp, etag, err := d.Render()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Currently only snapshot data needs usage added.
+	snapResp, ok := resp.(*api.InstanceSnapshot)
+	if !ok {
+		return resp, etag, nil
+	}
+
+	pool, err := d.getStoragePool()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// It is important that the snapshot not be mounted here as mounting a snapshot can trigger a very
+	// expensive filesystem UUID regeneration, so we rely on the driver implementation to get the info
+	// we are requesting as cheaply as possible.
+	volumeState, err := pool.GetInstanceUsage(d)
+	if err != nil {
+		return resp, etag, nil
+	}
+
+	snapResp.Size = volumeState.Used
+	return snapResp, etag, nil
+}
+
 // Render renders the state of the instance.
-func (d *lxc) Render(options ...func(response any) error) (any, any, error) {
+func (d *lxc) Render() (any, any, error) {
 	// Ignore err as the arch string on error is correct (unknown)
 	architectureName, _ := osarch.ArchitectureName(d.architecture)
 	profileNames := make([]string, 0, len(d.profiles))
@@ -3648,13 +3702,6 @@ func (d *lxc) Render(options ...func(response any) error) (any, any, error) {
 		snapState.Ephemeral = d.ephemeral
 		snapState.Profiles = profileNames
 		snapState.ExpiresAt = d.expiryDate
-
-		for _, option := range options {
-			err := option(&snapState)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
 
 		return &snapState, d.ETag(), nil
 	}
@@ -3682,13 +3729,6 @@ func (d *lxc) Render(options ...func(response any) error) (any, any, error) {
 	instState.Stateful = d.stateful
 	instState.Project = d.project.Name
 
-	for _, option := range options {
-		err := option(&instState)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
 	return &instState, d.ETag(), nil
 }
 
@@ -3696,6 +3736,17 @@ func (d *lxc) Render(options ...func(response any) error) (any, any, error) {
 func (d *lxc) RenderFull(hostInterfaces []net.Interface) (*api.InstanceFull, any, error) {
 	if d.IsSnapshot() {
 		return nil, nil, fmt.Errorf("RenderFull only works with containers")
+	}
+
+	// Pre-fetch the data.
+	pool, err := d.getStoragePool()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = pool.CacheInstanceSnapshots(d)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Get the Container struct
@@ -3959,8 +4010,8 @@ func (d *lxc) Restore(sourceContainer instance.Instance, stateful bool) error {
 
 	d.logger.Debug("Mounting instance to check for CRIU state path existence")
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Ensure that storage is mounted for state path checks and for backup.yaml updates.
 	_, err = d.mount()
@@ -3969,7 +4020,7 @@ func (d *lxc) Restore(sourceContainer instance.Instance, stateful bool) error {
 		return err
 	}
 
-	revert.Add(func() { _ = d.unmount() })
+	reverter.Add(func() { _ = d.unmount() })
 
 	// Check for CRIU if necessary, before doing a bunch of filesystem manipulations.
 	// Requires container be mounted to check StatePath exists.
@@ -3988,7 +4039,7 @@ func (d *lxc) Restore(sourceContainer instance.Instance, stateful bool) error {
 		return err
 	}
 
-	revert.Success()
+	reverter.Success()
 
 	// Restore the rootfs.
 	err = pool.RestoreInstanceSnapshot(d, sourceContainer, nil)
@@ -4363,12 +4414,13 @@ func (d *lxc) Rename(newName string, applyTemplateTrigger bool) error {
 			return fmt.Errorf("Failed renaming instance: %w", err)
 		}
 	}
-	revert := revert.New()
-	defer revert.Fail()
+
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Set the new name in the struct.
 	d.name = newName
-	revert.Add(func() { d.name = oldName })
+	reverter.Add(func() { d.name = oldName })
 
 	// Rename the backups.
 	backups, err := d.Backups()
@@ -4387,7 +4439,7 @@ func (d *lxc) Rename(newName string, applyTemplateTrigger bool) error {
 			return err
 		}
 
-		revert.Add(func() { _ = b.Rename(oldName) })
+		reverter.Add(func() { _ = b.Rename(oldName) })
 	}
 
 	// Invalidate the go-lxc cache.
@@ -4427,7 +4479,8 @@ func (d *lxc) Rename(newName string, applyTemplateTrigger bool) error {
 		d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceRenamed.Event(d, map[string]any{"old_name": oldName}))
 	}
 
-	revert.Success()
+	reverter.Success()
+
 	return nil
 }
 
@@ -5030,7 +5083,7 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 				}
 			} else if key == "limits.cpu" || key == "limits.cpu.nodes" {
 				// Trigger a scheduler re-run
-				cgroup.TaskSchedulerTrigger("container", d.name, "changed")
+				defer cgroup.TaskSchedulerTrigger("container", d.name, "changed") //nolint:revive
 			} else if key == "limits.cpu.priority" || key == "limits.cpu.allowance" {
 				// Skip if no cpu CGroup
 				if !d.state.OS.CGInfo.Supports(cgroup.CPU, cg) {
@@ -5244,7 +5297,7 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 }
 
 // Export backs up the instance.
-func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (*api.ImageMetadata, error) {
+func (d *lxc) Export(metaWriter io.Writer, rootfsWriter io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (*api.ImageMetadata, error) {
 	ctxMap := logger.Ctx{
 		"created":   d.creationDate,
 		"ephemeral": d.ephemeral,
@@ -5274,26 +5327,50 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 	}
 
 	// Create the tarball.
-	tarWriter := instancewriter.NewInstanceTarWriter(w, idmap)
+	metaTarWriter := instancewriter.NewInstanceTarWriter(metaWriter, idmap)
+
+	var rootfsTarWriter *instancewriter.InstanceTarWriter
+	if rootfsWriter != nil {
+		rootfsTarWriter = instancewriter.NewInstanceTarWriter(rootfsWriter, idmap)
+	}
 
 	// Keep track of the first path we saw for each path with nlink>1.
 	cDir := d.Path()
 
 	// Path inside the tar image is the pathname starting after cDir.
-	offset := len(cDir) + 1
+	// For the rootfs tarball in a split image, the path inside is the pathname starting after rootfs/
+	metaOffset := len(cDir) + 1
+	rootfsOffset := len(d.RootfsPath())
 
-	writeToTar := func(path string, fi os.FileInfo, err error) error {
+	writeToMetaTar := func(fPath string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		err = tarWriter.WriteFile(path[offset:], path, fi, false)
+		err = metaTarWriter.WriteFile(fPath[metaOffset:], fPath, fi, false)
 		if err != nil {
-			d.logger.Debug("Error tarring up", logger.Ctx{"path": path, "err": err})
+			d.logger.Debug("Error tarring up", logger.Ctx{"path": fPath, "err": err})
 			return err
 		}
 
 		return nil
+	}
+
+	var writeToRootfsTar func(string, os.FileInfo, error) error
+	if rootfsWriter != nil {
+		writeToRootfsTar = func(path string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			err = rootfsTarWriter.WriteFile(path[rootfsOffset:], path, fi, false)
+			if err != nil {
+				d.logger.Debug("Error tarring up", logger.Ctx{"path": path, "err": err})
+				return err
+			}
+
+			return nil
+		}
 	}
 
 	// Get the instance's architecture.
@@ -5302,7 +5379,11 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 		parentName, _, _ := api.GetParentAndSnapshotName(d.name)
 		parent, err := instance.LoadByProjectAndName(d.state, d.project.Name, parentName)
 		if err != nil {
-			_ = tarWriter.Close()
+			_ = metaTarWriter.Close()
+			if rootfsTarWriter != nil {
+				_ = rootfsTarWriter.Close()
+			}
+
 			d.logger.Error("Failed exporting instance", ctxMap)
 			return nil, err
 		}
@@ -5328,14 +5409,22 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 		// Parse the metadata.
 		content, err := os.ReadFile(fnam)
 		if err != nil {
-			_ = tarWriter.Close()
+			_ = metaTarWriter.Close()
+			if rootfsTarWriter != nil {
+				_ = rootfsTarWriter.Close()
+			}
+
 			d.logger.Error("Failed exporting instance", ctxMap)
 			return nil, err
 		}
 
 		err = yaml.Unmarshal(content, &meta)
 		if err != nil {
-			_ = tarWriter.Close()
+			_ = metaTarWriter.Close()
+			if rootfsTarWriter != nil {
+				_ = rootfsTarWriter.Close()
+			}
+
 			d.logger.Error("Failed exporting instance", ctxMap)
 			return nil, err
 		}
@@ -5360,7 +5449,11 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 	// Write the new metadata.yaml.
 	tempDir, err := os.MkdirTemp("", "incus_metadata_")
 	if err != nil {
-		_ = tarWriter.Close()
+		_ = metaTarWriter.Close()
+		if rootfsTarWriter != nil {
+			_ = rootfsTarWriter.Close()
+		}
+
 		d.logger.Error("Failed exporting instance", ctxMap)
 		return nil, err
 	}
@@ -5369,7 +5462,11 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 
 	data, err := yaml.Marshal(&meta)
 	if err != nil {
-		_ = tarWriter.Close()
+		_ = metaTarWriter.Close()
+		if rootfsTarWriter != nil {
+			_ = rootfsTarWriter.Close()
+		}
+
 		d.logger.Error("Failed exporting instance", ctxMap)
 		return nil, err
 	}
@@ -5377,7 +5474,11 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 	fnam = filepath.Join(tempDir, "metadata.yaml")
 	err = os.WriteFile(fnam, data, 0o644)
 	if err != nil {
-		_ = tarWriter.Close()
+		_ = metaTarWriter.Close()
+		if rootfsTarWriter != nil {
+			_ = rootfsTarWriter.Close()
+		}
+
 		d.logger.Error("Failed exporting instance", ctxMap)
 		return nil, err
 	}
@@ -5385,15 +5486,23 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 	// Add metadata.yaml to the tarball.
 	fi, err := os.Lstat(fnam)
 	if err != nil {
-		_ = tarWriter.Close()
+		_ = metaTarWriter.Close()
+		if rootfsTarWriter != nil {
+			_ = rootfsTarWriter.Close()
+		}
+
 		d.logger.Error("Failed exporting instance", ctxMap)
 		return nil, err
 	}
 
 	tmpOffset := len(filepath.Dir(fnam)) + 1
-	err = tarWriter.WriteFile(fnam[tmpOffset:], fnam, fi, false)
+	err = metaTarWriter.WriteFile(fnam[tmpOffset:], fnam, fi, false)
 	if err != nil {
-		_ = tarWriter.Close()
+		_ = metaTarWriter.Close()
+		if rootfsTarWriter != nil {
+			_ = rootfsTarWriter.Close()
+		}
+
 		d.logger.Debug("Error writing to tarfile", logger.Ctx{"err": err})
 		d.logger.Error("Failed exporting instance", ctxMap)
 		return nil, err
@@ -5401,26 +5510,42 @@ func (d *lxc) Export(w io.Writer, properties map[string]string, expiration time.
 
 	// Include all the rootfs files.
 	fnam = d.RootfsPath()
-	err = filepath.Walk(fnam, writeToTar)
-	if err != nil {
-		d.logger.Error("Failed exporting instance", ctxMap)
-		return nil, err
-	}
-
-	// Include all the templates.
-	fnam = d.TemplatesPath()
-	if util.PathExists(fnam) {
-		err = filepath.Walk(fnam, writeToTar)
+	if rootfsWriter == nil {
+		err = filepath.Walk(fnam, writeToMetaTar)
+		if err != nil {
+			d.logger.Error("Failed exporting instance", ctxMap)
+			return nil, err
+		}
+	} else {
+		err = filepath.Walk(fnam, writeToRootfsTar)
 		if err != nil {
 			d.logger.Error("Failed exporting instance", ctxMap)
 			return nil, err
 		}
 	}
 
-	err = tarWriter.Close()
+	// Include all the templates.
+	fnam = d.TemplatesPath()
+	if util.PathExists(fnam) {
+		err = filepath.Walk(fnam, writeToMetaTar)
+		if err != nil {
+			d.logger.Error("Failed exporting instance", ctxMap)
+			return nil, err
+		}
+	}
+
+	err = metaTarWriter.Close()
 	if err != nil {
 		d.logger.Error("Failed exporting instance", ctxMap)
 		return nil, err
+	}
+
+	if rootfsTarWriter != nil {
+		err = rootfsTarWriter.Close()
+		if err != nil {
+			d.logger.Error("Failed exporting instance", ctxMap)
+			return nil, err
+		}
 	}
 
 	d.logger.Info("Exported instance", ctxMap)
@@ -6129,7 +6254,7 @@ func (d *lxc) resetContainerDiskIdmap(srcIdmap *idmap.Set) error {
 	}
 
 	if dstIdmap == nil {
-		dstIdmap = new(idmap.Set)
+		dstIdmap = &idmap.Set{}
 	}
 
 	if !srcIdmap.Equals(dstIdmap) {
@@ -6317,7 +6442,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 	d.logger.Debug("Sent migration response to source")
 
-	srcIdmap := new(idmap.Set)
+	srcIdmap := &idmap.Set{}
 	for _, idmapSet := range offerHeader.Idmap {
 		e := idmap.Entry{
 			IsUID:    *idmapSet.Isuid,
@@ -6330,8 +6455,8 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		srcIdmap.Entries = append(srcIdmap.Entries, e)
 	}
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	g, ctx := errgroup.WithContext(context.Background())
 
@@ -6493,7 +6618,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 						return fmt.Errorf("Failed creating instance snapshot record %q: %w", snapArgs.Name, err)
 					}
 
-					revert.Add(cleanup)
+					reverter.Add(cleanup)
 					defer snapInstOp.Done(err)
 				}
 			}
@@ -6509,7 +6634,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		// Only delete all instance volumes on error if the pool volume creation has succeeded to
 		// avoid deleting an existing conflicting volume.
 		if !volTargetArgs.Refresh && !isRemoteClusterMove {
-			revert.Add(func() {
+			reverter.Add(func() {
 				snapshots, _ := d.Snapshots()
 				snapshotCount := len(snapshots)
 				for k := range snapshots {
@@ -6679,7 +6804,8 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		// not collect the error, as it will just be a disconnect error from the source.
 		_ = g.Wait()
 
-		revert.Success()
+		reverter.Success()
+
 		return nil
 	}
 }
@@ -6903,7 +7029,7 @@ func (d *lxc) templateApplyNow(trigger instance.TemplateTrigger) error {
 		return fmt.Errorf("Failed to read metadata: %w", err)
 	}
 
-	metadata := new(api.ImageMetadata)
+	metadata := &api.ImageMetadata{}
 	err = yaml.Unmarshal(content, &metadata)
 	if err != nil {
 		return fmt.Errorf("Could not parse %s: %w", fname, err)
@@ -7157,8 +7283,8 @@ func (d *lxc) FileSFTPConn() (net.Conn, error) {
 	}
 
 	// Setup reverter.
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Create the listener.
 	_ = os.Remove(forkfilePath)
@@ -7167,7 +7293,7 @@ func (d *lxc) FileSFTPConn() (net.Conn, error) {
 		return nil, err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = forkfileListener.Close()
 		_ = os.Remove(forkfilePath)
 	})
@@ -7320,7 +7446,8 @@ func (d *lxc) FileSFTPConn() (net.Conn, error) {
 	}
 
 	// All done.
-	revert.Success()
+	reverter.Success()
+
 	return forkfileConn, nil
 }
 
@@ -7650,7 +7777,7 @@ func (d *lxc) diskState() map[string]api.InstanceStateDisk {
 		var usage *storagePools.VolumeUsage
 
 		if dev.Config["path"] == "/" {
-			pool, err := storagePools.LoadByInstance(d.state, d)
+			pool, err := d.getStoragePool()
 			if err != nil {
 				d.logger.Error("Error loading storage pool", logger.Ctx{"err": err})
 				continue

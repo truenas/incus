@@ -70,13 +70,8 @@ func instanceRebuildPost(d *Daemon, r *http.Request) response.Response {
 		return response.BadRequest(fmt.Errorf("Invalid instance name"))
 	}
 
-	instanceType, err := urlInstanceTypeDetect(r)
-	if err != nil {
-		return response.SmartError(err)
-	}
-
 	// Handle requests targeted to a container on a different node
-	resp, err := forwardedResponseIfInstanceIsRemote(s, r, targetProjectName, name, instanceType)
+	resp, err := forwardedResponseIfInstanceIsRemote(s, r, targetProjectName, name)
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -136,11 +131,11 @@ func instanceRebuildPost(d *Daemon, r *http.Request) response.Response {
 
 	run := func(op *operations.Operation) error {
 		if req.Source.Type == "none" {
-			return instanceRebuildFromEmpty(s, inst, op)
+			return instanceRebuildFromEmpty(inst, op)
 		}
 
 		if req.Source.Server != "" {
-			sourceImage, err = ensureDownloadedImageFitWithinBudget(context.TODO(), s, r, op, *targetProject, sourceImage, sourceImageRef, req.Source, inst.Type().String())
+			sourceImage, err = ensureDownloadedImageFitWithinBudget(context.TODO(), s, r, op, *targetProject, sourceImageRef, req.Source, inst.Type().String())
 			if err != nil {
 				return err
 			}

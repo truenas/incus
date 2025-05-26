@@ -431,7 +431,7 @@ Column shorthand chars:
 	p - Newline-separated list of projects`))
 
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", "ntdfe", i18n.G("Columns")+"``")
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
@@ -547,8 +547,16 @@ func (c *cmdConfigTrustList) Run(cmd *cobra.Command, args []string) error {
 
 	resource := resources[0]
 
+	// Process the filters
+	filters := []string{}
+	if len(args) > 1 {
+		filters = append(filters, args[1:]...)
+	}
+
+	filters = prepareCertificatesFilters(filters)
+
 	// List trust relationships
-	trust, err := resource.server.GetCertificates()
+	trust, err := resource.server.GetCertificatesWithFilter(filters)
 	if err != nil {
 		return err
 	}
@@ -624,7 +632,7 @@ Pre-defined column shorthand chars:
   n - Name
   t - Token
   E - Expires At`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultConfigTrustListTokenColumns, i18n.G("Columns")+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -762,7 +770,7 @@ type cmdConfigTrustRemove struct {
 func (c *cmdConfigTrustRemove) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("remove", i18n.G("[<remote>:]<fingerprint>"))
-	cmd.Aliases = []string{"rm"}
+	cmd.Aliases = []string{"delete", "rm"}
 	cmd.Short = i18n.G("Remove trusted client")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Remove trusted client`))
@@ -928,4 +936,28 @@ func (c *cmdConfigTrustShow) Run(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s", data)
 
 	return nil
+}
+
+// prepareCertificatesFilters processes and formats filter criteria
+// for storage buckets, ensuring they are in a format that the server can interpret.
+func prepareCertificatesFilters(filters []string) []string {
+	formatedFilters := []string{}
+
+	for _, filter := range filters {
+		membs := strings.SplitN(filter, "=", 2)
+		key := membs[0]
+
+		if len(membs) == 1 {
+			regexpValue := key
+			if !strings.Contains(key, "^") && !strings.Contains(key, "$") {
+				regexpValue = "^" + regexpValue + "$"
+			}
+
+			filter = fmt.Sprintf("name=(%s|^%s.*)", regexpValue, key)
+		}
+
+		formatedFilters = append(formatedFilters, filter)
+	}
+
+	return formatedFilters
 }

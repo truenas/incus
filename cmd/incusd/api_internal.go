@@ -264,7 +264,7 @@ func internalOptimizeImage(d *Daemon, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
-func internalRefreshImage(d *Daemon, r *http.Request) response.Response {
+func internalRefreshImage(d *Daemon, _ *http.Request) response.Response {
 	s := d.State()
 
 	err := autoUpdateImages(s.ShutdownCtx, s)
@@ -275,7 +275,7 @@ func internalRefreshImage(d *Daemon, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
-func internalWaitReady(d *Daemon, r *http.Request) response.Response {
+func internalWaitReady(d *Daemon, _ *http.Request) response.Response {
 	// Check that we're not shutting down.
 	isClosing := d.State().ShutdownCtx.Err() != nil
 	if isClosing {
@@ -743,7 +743,7 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 		return err
 	}
 
-	if allowNameOverride && instName != "" {
+	if allowNameOverride {
 		backupConf.Container.Name = instName
 	}
 
@@ -836,17 +836,17 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 
 	// Add root device if needed.
 	if backupConf.Container.Devices == nil {
-		backupConf.Container.Devices = make(map[string]map[string]string, 0)
+		backupConf.Container.Devices = make(map[string]map[string]string)
 	}
 
 	if backupConf.Container.ExpandedDevices == nil {
-		backupConf.Container.ExpandedDevices = make(map[string]map[string]string, 0)
+		backupConf.Container.ExpandedDevices = make(map[string]map[string]string)
 	}
 
 	internalImportRootDevicePopulate(instancePoolName, backupConf.Container.Devices, backupConf.Container.ExpandedDevices, profiles)
 
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	if backupConf.Container == nil {
 		return fmt.Errorf("No instance config in backup config")
@@ -862,7 +862,7 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 		return fmt.Errorf("Failed creating instance record: %w", err)
 	}
 
-	revert.Add(cleanup)
+	reverter.Add(cleanup)
 	defer instOp.Done(err)
 
 	instancePath := storagePools.InstancePath(instanceType, projectName, backupConf.Container.Name, false)
@@ -907,27 +907,9 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 			return err
 		}
 
-		// If a storage volume entry exists only proceed if force was specified.
+		// If the storage volume entry does already exist we error here
 		if dbVolume != nil {
 			return fmt.Errorf(`Storage volume for snapshot %q already exists in the database`, snapInstName)
-		}
-
-		if snapErr == nil {
-			err := s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
-				return tx.DeleteInstance(ctx, projectName, snapInstName)
-			})
-			if err != nil {
-				return err
-			}
-		}
-
-		if dbVolume != nil {
-			err := s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
-				return tx.RemoveStoragePoolVolume(ctx, projectName, snapInstName, instanceDBVolType, pool.ID())
-			})
-			if err != nil {
-				return err
-			}
 		}
 
 		baseImage := snap.Config["volatile.base_image"]
@@ -948,11 +930,11 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 
 		// Add root device if needed.
 		if snap.Devices == nil {
-			snap.Devices = make(map[string]map[string]string, 0)
+			snap.Devices = make(map[string]map[string]string)
 		}
 
 		if snap.ExpandedDevices == nil {
-			snap.ExpandedDevices = make(map[string]map[string]string, 0)
+			snap.ExpandedDevices = make(map[string]map[string]string)
 		}
 
 		internalImportRootDevicePopulate(instancePoolName, snap.Devices, snap.ExpandedDevices, profiles)
@@ -976,7 +958,7 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 			return fmt.Errorf("Failed creating instance snapshot record %q: %w", snap.Name, err)
 		}
 
-		revert.Add(cleanup)
+		reverter.Add(cleanup)
 		defer snapInstOp.Done(err)
 
 		// Recreate missing mountpoints and symlinks.
@@ -991,7 +973,7 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 		}
 	}
 
-	revert.Success()
+	reverter.Success()
 	return nil
 }
 
@@ -1089,7 +1071,7 @@ func internalImportRootDevicePopulate(instancePoolName string, localDevices map[
 	}
 }
 
-func internalGC(d *Daemon, r *http.Request) response.Response {
+func internalGC(_ *Daemon, _ *http.Request) response.Response {
 	logger.Infof("Started forced garbage collection run")
 	runtime.GC()
 	runtimeDebug.FreeOSMemory()
@@ -1106,19 +1088,19 @@ func internalGC(d *Daemon, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
-func internalRAFTSnapshot(d *Daemon, r *http.Request) response.Response {
+func internalRAFTSnapshot(_ *Daemon, _ *http.Request) response.Response {
 	logger.Warn("Forced RAFT snapshot not supported")
 
 	return response.InternalError(fmt.Errorf("Not supported"))
 }
 
-func internalBGPState(d *Daemon, r *http.Request) response.Response {
+func internalBGPState(d *Daemon, _ *http.Request) response.Response {
 	s := d.State()
 
 	return response.SyncResponse(true, s.BGP.Debug())
 }
 
-func internalRebalanceLoad(d *Daemon, r *http.Request) response.Response {
+func internalRebalanceLoad(d *Daemon, _ *http.Request) response.Response {
 	err := autoRebalanceCluster(context.TODO(), d)
 	if err != nil {
 		return response.SmartError(err)

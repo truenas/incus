@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -105,6 +107,10 @@ func (c *cmdNetwork) Command() *cobra.Command {
 	// ACL
 	networkACLCmd := cmdNetworkACL{global: c.global}
 	cmd.AddCommand(networkACLCmd.Command())
+
+	// Address set
+	networkAddressSetCmd := cmdNetworkAddressSet{global: c.global}
+	cmd.AddCommand(networkAddressSetCmd.Command())
 
 	// Forward
 	networkForwardCmd := cmdNetworkForward{global: c.global}
@@ -342,6 +348,7 @@ type cmdNetworkCreate struct {
 func (c *cmdNetworkCreate) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("create", i18n.G("[<remote>:]<network> [key=value...]"))
+	cmd.Aliases = []string{"add"}
 	cmd.Short = i18n.G("Create new networks")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(`Create new networks`))
 	cmd.Example = cli.FormatSection("", i18n.G(`incus network create foo
@@ -459,7 +466,7 @@ type cmdNetworkDelete struct {
 func (c *cmdNetworkDelete) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("delete", i18n.G("[<remote>:]<network>"))
-	cmd.Aliases = []string{"rm"}
+	cmd.Aliases = []string{"rm", "remove"}
 	cmd.Short = i18n.G("Delete networks")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Delete networks`))
@@ -1097,11 +1104,19 @@ type cmdNetworkList struct {
 // Command returns a cobra.Command for use with (*cobra.Command).AddCommand.
 func (c *cmdNetworkList) Command() *cobra.Command {
 	cmd := &cobra.Command{}
-	cmd.Use = usage("list", i18n.G("[<remote>:]"))
+	cmd.Use = usage("list", i18n.G("[<remote>:] [<filter>...]"))
 	cmd.Aliases = []string{"ls"}
 	cmd.Short = i18n.G("List available networks")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`List available networks
+
+Filters may be of the <key>=<value> form for property based filtering,
+or part of the network name. Filters must be delimited by a ','.
+
+Examples:
+  - "foo" lists all networks that start with the name foo
+  - "name=foo" lists all networks that exactly have the name foo
+  - "type=bridge" lists all networks with the type bridge
 
 The -c option takes a (optionally comma-separated) list of arguments
 that control which image attributes to output when displaying in table
@@ -1120,7 +1135,7 @@ t - Interface type
 u - Used by (count)`))
 
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultNetworkColumns, i18n.G("Columns")+"``")
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().BoolVar(&c.flagAllProjects, "all-projects", false, i18n.G("List networks in all projects"))
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -1224,15 +1239,21 @@ func (c *cmdNetworkList) stateColumnData(network api.Network) string {
 // Run runs the actual command logic.
 func (c *cmdNetworkList) Run(cmd *cobra.Command, args []string) error {
 	// Quick checks.
-	exit, err := c.global.checkArgs(cmd, args, 0, 1)
+	exit, err := c.global.checkArgs(cmd, args, 0, -1)
 	if exit {
 		return err
 	}
 
-	// Parse remote
+	// Parse remote and filters.
 	remote := ""
-	if len(args) > 0 {
-		remote = args[0]
+	filters := []string{}
+
+	if len(args) != 0 {
+		filters = args
+		if strings.Contains(args[0], ":") && !strings.Contains(args[0], "=") {
+			remote = args[0]
+			filters = args[1:]
+		}
 	}
 
 	resources, err := c.global.parseServers(remote)
@@ -1247,17 +1268,18 @@ func (c *cmdNetworkList) Run(cmd *cobra.Command, args []string) error {
 		return errors.New(i18n.G("Filtering isn't supported yet"))
 	}
 
+	filters = prepareNetworkServerFilters(filters)
+	serverFilters, _ := getServerSupportedFilters(filters, []string{}, false)
+
 	var networks []api.Network
 	if c.flagAllProjects {
-		networks, err = resource.server.GetNetworksAllProjects()
-		if err != nil {
-			return err
-		}
+		networks, err = resource.server.GetNetworksAllProjectsWithFilter(serverFilters)
 	} else {
-		networks, err = resource.server.GetNetworks()
-		if err != nil {
-			return err
-		}
+		networks, err = resource.server.GetNetworksWithFilter(serverFilters)
+	}
+
+	if err != nil {
+		return err
 	}
 
 	// Parse column flags.
@@ -1326,7 +1348,7 @@ Pre-defined column shorthand chars:
   i - IP Address
   t - Type
   L - Location of the DHCP Lease (e.g. its cluster member)`))
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().StringVarP(&c.flagColumns, "columns", "c", defaultNetworkListLeasesColumns, i18n.G("Columns")+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -1733,4 +1755,41 @@ func (c *cmdNetworkUnset) Run(cmd *cobra.Command, args []string) error {
 
 	args = append(args, "")
 	return c.networkSet.Run(cmd, args)
+}
+
+// prepareNetworkServerFilter processes and formats filter criteria
+// for networks, ensuring they are in a format that the server can interpret.
+func prepareNetworkServerFilters(filters []string) []string {
+	flattenedFilters := []string{}
+	for _, filter := range filters {
+		flattenedFilters = append(flattenedFilters, strings.Split(filter, ",")...)
+	}
+
+	formattedFilters := []string{}
+
+	for _, filter := range flattenedFilters {
+		membs := strings.SplitN(filter, "=", 2)
+		key := membs[0]
+
+		if len(membs) == 1 {
+			filter = fmt.Sprintf("name=^%s($|.*)", regexp.QuoteMeta(key))
+		} else if len(membs) == 2 {
+			firstPart := key
+			if strings.Contains(key, ".") {
+				firstPart = strings.Split(key, ".")[0]
+			}
+
+			if !structHasField(reflect.TypeOf(api.Network{}), firstPart) {
+				filter = fmt.Sprintf("config.%s", filter)
+			}
+
+			if key == "state" {
+				filter = fmt.Sprintf("status=%s", membs[1])
+			}
+		}
+
+		formattedFilters = append(formattedFilters, filter)
+	}
+
+	return formattedFilters
 }

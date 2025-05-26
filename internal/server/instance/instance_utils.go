@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -737,8 +738,8 @@ func ValidName(instanceName string, isSnapshot bool) error {
 // instance is fully completed, and a revert fail function that can be used to undo this function if a subsequent
 // step fails.
 func CreateInternal(s *state.State, args db.InstanceArgs, op *operations.Operation, clearLogDir bool, checkArchitecture bool) (Instance, *operationlock.InstanceOperation, revert.Hook, error) {
-	revert := revert.New()
-	defer revert.Fail()
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	// Check instance type requested is supported by this machine.
 	err := s.InstanceTypes[args.Type]
@@ -861,7 +862,7 @@ func CreateInternal(s *state.State, args db.InstanceArgs, op *operations.Operati
 		return nil, nil, nil, err
 	}
 
-	revert.Add(func() { opl.Done(err) })
+	reverter.Add(func() { opl.Done(err) })
 
 	var dbInst cluster.Instance
 	var p *api.Project
@@ -1003,7 +1004,7 @@ func CreateInternal(s *state.State, args db.InstanceArgs, op *operations.Operati
 		return nil
 	})
 	if err != nil {
-		if err == db.ErrAlreadyDefined {
+		if errors.Is(err, db.ErrAlreadyDefined) {
 			thing := "Instance"
 			if instance.IsSnapshot(args.Name) {
 				thing = "Snapshot"
@@ -1015,7 +1016,7 @@ func CreateInternal(s *state.State, args db.InstanceArgs, op *operations.Operati
 		return nil, nil, nil, err
 	}
 
-	revert.Add(func() {
+	reverter.Add(func() {
 		_ = s.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 			return tx.DeleteInstance(ctx, dbInst.Project, dbInst.Name)
 		})
@@ -1026,7 +1027,7 @@ func CreateInternal(s *state.State, args db.InstanceArgs, op *operations.Operati
 		return nil, nil, nil, fmt.Errorf("Failed initializing instance: %w", err)
 	}
 
-	revert.Add(cleanup)
+	reverter.Add(cleanup)
 
 	// Wipe any existing log for this instance name.
 	if clearLogDir {
@@ -1034,8 +1035,9 @@ func CreateInternal(s *state.State, args db.InstanceArgs, op *operations.Operati
 		_ = os.RemoveAll(inst.RunPath())
 	}
 
-	cleanup = revert.Clone().Fail
-	revert.Success()
+	cleanup = reverter.Clone().Fail
+	reverter.Success()
+
 	return inst, opl, cleanup, err
 }
 

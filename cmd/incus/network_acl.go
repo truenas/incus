@@ -97,7 +97,7 @@ func (c *cmdNetworkACLList) Command() *cobra.Command {
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G("List available network ACL"))
 
 	cmd.RunE = c.Run
-	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", c.global.defaultListFormat(), i18n.G(`Format (csv|json|table|yaml|compact), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`)+"``")
 	cmd.Flags().BoolVar(&c.flagAllProjects, "all-projects", false, i18n.G("List network ACLs across all projects"))
 
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -393,6 +393,7 @@ type cmdNetworkACLCreate struct {
 func (c *cmdNetworkACLCreate) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("create", i18n.G("[<remote>:]<ACL> [key=value...]"))
+	cmd.Aliases = []string{"add"}
 	cmd.Short = i18n.G("Create new network ACLs")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G("Create new network ACLs"))
 	cmd.Example = cli.FormatSection("", i18n.G(`incus network acl create a1
@@ -832,7 +833,7 @@ type cmdNetworkACLDelete struct {
 func (c *cmdNetworkACLDelete) Command() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("delete", i18n.G("[<remote>:]<ACL>"))
-	cmd.Aliases = []string{"rm"}
+	cmd.Aliases = []string{"rm", "remove"}
 	cmd.Short = i18n.G("Delete network ACLs")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G("Delete network ACLs"))
 	cmd.RunE = c.Run
@@ -909,6 +910,7 @@ func (c *cmdNetworkACLRule) Command() *cobra.Command {
 func (c *cmdNetworkACLRule) CommandAdd() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("add", i18n.G("[<remote>:]<ACL> <direction> <key>=<value>..."))
+	cmd.Aliases = []string{"create"}
 	cmd.Short = i18n.G("Add rules to an ACL")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G("Add rules to an ACL"))
 
@@ -1056,6 +1058,7 @@ func (c *cmdNetworkACLRule) RunAdd(cmd *cobra.Command, args []string) error {
 func (c *cmdNetworkACLRule) CommandRemove() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Use = usage("remove", i18n.G("[<remote>:]<ACL> <direction> <key>=<value>..."))
+	cmd.Aliases = []string{"delete", "rm"}
 	cmd.Short = i18n.G("Remove rules from an ACL")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G("Remove rules from an ACL"))
 	cmd.Flags().BoolVar(&c.flagRemoveForce, "force", false, i18n.G("Remove all rules that match"))

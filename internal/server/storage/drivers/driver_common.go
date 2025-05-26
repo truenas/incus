@@ -1,6 +1,7 @@
 package drivers
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -303,10 +304,10 @@ func (d *common) moveGPTAltHeader(devPath string) error {
 		return nil
 	}
 
-	runErr, ok := err.(subprocess.RunError)
-	if ok {
-		exitError, ok := runErr.Unwrap().(*exec.ExitError)
-		if ok {
+	var runErr subprocess.RunError
+	if errors.As(err, &runErr) {
+		var exitError *exec.ExitError
+		if errors.As(runErr.Unwrap(), &exitError) {
 			// sgdisk manpage says exit status 3 means:
 			// "Non-GPT disk detected and no -g option, but operation requires a write action".
 			if exitError.ExitCode() == 3 {
@@ -576,4 +577,9 @@ func (d *common) filesystemFreeze(path string) (func() error, error) {
 	}
 
 	return unfreezeFS, nil
+}
+
+// CacheVolumeSnapshots causes snapshot data to be cached for later use (for bulk queries).
+func (d *common) CacheVolumeSnapshots(vol Volume) error {
+	return nil
 }
