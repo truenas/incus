@@ -201,8 +201,10 @@ func Unpack(file string, path string, blockBackend bool, maxMemory int64, tracke
 			}
 		}
 
-		if linux.IsNfs(path) {
-			logger.Warn("Unpack: destination path is NFS, disabling non-user xatttr unpacking", logger.Ctx{"file": file, "command": command, "extension": extension, "path": path, "args": args})
+		// NFS 4.2 can support xattrs, but not security.xattr.
+		if linux.IsNFS(path) {
+			logger.Warn("Unpack: destination path is NFS, disabling non-user xattr unpacking", logger.Ctx{"file": file, "command": command, "extension": extension, "path": path, "args": args})
+
 			args = append(args, "-user-xattrs")
 		}
 
