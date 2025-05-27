@@ -72,6 +72,16 @@ func FSTypeToName(fsType int32) (string, error) {
 	return fmt.Sprintf("0x%x", fsType), nil
 }
 
+// IsNfs returns true if the path exists and is NFS
+func IsNfs(path string) bool {
+	backingFs, err := DetectFilesystem(path)
+	if err != nil {
+		return false
+	}
+
+	return backingFs == "nfs"
+}
+
 func hasMountEntry(name string) int {
 	// In case someone uses symlinks we need to look for the actual
 	// mountpoint.
