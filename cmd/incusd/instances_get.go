@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -218,7 +219,7 @@ func instancesGet(d *Daemon, r *http.Request) response.Response {
 	allProjects := util.IsTrue(r.FormValue("all-projects"))
 
 	if allProjects && projectName != "" {
-		return response.BadRequest(fmt.Errorf("Cannot specify a project when requesting all projects"))
+		return response.BadRequest(errors.New("Cannot specify a project when requesting all projects"))
 	} else if !allProjects && projectName == "" {
 		projectName = api.ProjectDefaultName
 	}
@@ -312,7 +313,7 @@ func instancesGet(d *Daemon, r *http.Request) response.Response {
 		// Mark instances on unavailable projectInstanceToNodeName as down.
 		if mustLoadObjects && memberAddress == "0.0.0.0" {
 			for _, inst := range instances {
-				resultErrListAppend(inst, fmt.Errorf("unavailable"))
+				resultErrListAppend(inst, errors.New("unavailable"))
 			}
 
 			continue
@@ -337,7 +338,6 @@ func instancesGet(d *Daemon, r *http.Request) response.Response {
 					}
 
 					for _, apiInst := range apiInsts {
-						apiInst := apiInst // Local variable for append.
 						resultFullListAppend(&api.InstanceFull{Instance: apiInst})
 					}
 
@@ -354,7 +354,6 @@ func instancesGet(d *Daemon, r *http.Request) response.Response {
 				}
 
 				for _, c := range cs {
-					c := c // Local variable for append.
 					resultFullListAppend(&c)
 				}
 			}(memberAddress, instances)
@@ -371,10 +370,7 @@ func instancesGet(d *Daemon, r *http.Request) response.Response {
 				}})
 			}
 		} else {
-			threads := 4
-			if len(instances) < threads {
-				threads = len(instances)
-			}
+			threads := min(len(instances), 4)
 
 			hostInterfaces, _ := net.Interfaces()
 
@@ -393,7 +389,7 @@ func instancesGet(d *Daemon, r *http.Request) response.Response {
 
 			queue := make(chan db.Instance, threads)
 
-			for i := 0; i < threads; i++ {
+			for range threads {
 				wg.Add(1)
 
 				go func() {

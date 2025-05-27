@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -133,13 +133,7 @@ func ServerEventMode() EventMode {
 
 // RoleInSlice returns whether or not the rule is within the roles list.
 func RoleInSlice(role db.ClusterRole, roles []db.ClusterRole) bool {
-	for _, r := range roles {
-		if r == role {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(roles, role)
 }
 
 // EventListenerWait waits for there to be listener connected to the specified address, or one of the event hubs
@@ -155,7 +149,7 @@ func EventListenerWait(ctx context.Context, address string) error {
 
 	if listenersUnavailable[address] {
 		listenersLock.Unlock()
-		return fmt.Errorf("Server isn't ready yet")
+		return errors.New("Server isn't ready yet")
 	}
 
 	listenAddresses := []string{address}
@@ -191,7 +185,7 @@ func EventListenerWait(ctx context.Context, address string) error {
 		return nil
 	case <-ctx.Done():
 		if ctx.Err() != nil {
-			return fmt.Errorf("Missing event connection with target cluster member")
+			return errors.New("Missing event connection with target cluster member")
 		}
 
 		return nil

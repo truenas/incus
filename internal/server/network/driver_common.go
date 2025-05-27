@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"slices"
@@ -132,9 +133,7 @@ func (n *common) validate(config map[string]string, driverRules map[string]func(
 	rules := n.validationRules()
 
 	// Merge driver specific rules into common rules.
-	for field, validator := range driverRules {
-		rules[field] = validator
-	}
+	maps.Copy(rules, driverRules)
 
 	// Run the validator against each field.
 	for k, validator := range rules {
@@ -863,7 +862,7 @@ func (n *common) bgpGetPeers(config map[string]string) []string {
 // forwardValidate validates the forward request.
 func (n *common) forwardValidate(listenAddress net.IP, forward *api.NetworkForwardPut) ([]*forwardPortMap, error) {
 	if listenAddress == nil {
-		return nil, fmt.Errorf("Invalid listen address")
+		return nil, errors.New("Invalid listen address")
 	}
 
 	if listenAddress.IsUnspecified() {
@@ -920,17 +919,17 @@ func (n *common) forwardValidate(listenAddress net.IP, forward *api.NetworkForwa
 
 	if forward.Config["target_address"] != "" {
 		if defaultTargetAddress == nil {
-			return nil, fmt.Errorf("Invalid default target address")
+			return nil, errors.New("Invalid default target address")
 		}
 
 		defaultTargetIsIP4 := defaultTargetAddress.To4() != nil
 		if listenIsIP4 != defaultTargetIsIP4 {
-			return nil, fmt.Errorf("Cannot mix IP versions in listen address and default target address")
+			return nil, errors.New("Cannot mix IP versions in listen address and default target address")
 		}
 
 		// Check default target address is within network's subnet.
 		if netSubnet != nil && !SubnetContainsIP(netSubnet, defaultTargetAddress) {
-			return nil, fmt.Errorf("Default target address is not within the network subnet")
+			return nil, errors.New("Default target address is not within the network subnet")
 		}
 	}
 
@@ -990,7 +989,7 @@ func (n *common) forwardValidate(listenAddress net.IP, forward *api.NetworkForwa
 				return nil, fmt.Errorf("Invalid listen port in port specification %d: %w", portSpecID, err)
 			}
 
-			for i := int64(0); i < portRange; i++ {
+			for i := range portRange {
 				port := portFirst + i
 				_, found := listenPorts[portSpec.Protocol][port]
 				if found {
@@ -1004,7 +1003,7 @@ func (n *common) forwardValidate(listenAddress net.IP, forward *api.NetworkForwa
 
 		// Check that SNAT is only used with bridges.
 		if portSpec.SNAT && n.netType != "bridge" {
-			return nil, fmt.Errorf("SNAT can only be used with bridge networks")
+			return nil, errors.New("SNAT can only be used with bridge networks")
 		}
 
 		// Check valid target port(s) supplied.
@@ -1020,7 +1019,7 @@ func (n *common) forwardValidate(listenAddress net.IP, forward *api.NetworkForwa
 					return nil, fmt.Errorf("Invalid target port in port specification %d", portSpecID)
 				}
 
-				for i := int64(0); i < portRange; i++ {
+				for i := range portRange {
 					port := portFirst + i
 					portMap.target.ports = append(portMap.target.ports, uint64(port))
 				}
@@ -1201,7 +1200,7 @@ func (n *common) getExternalSubnetInUse(ctx context.Context, tx *db.ClusterTx, u
 // loadBalancerValidate validates the load balancer request.
 func (n *common) loadBalancerValidate(listenAddress net.IP, forward *api.NetworkLoadBalancerPut) ([]*loadBalancerPortMap, error) {
 	if listenAddress == nil {
-		return nil, fmt.Errorf("Invalid listen address")
+		return nil, errors.New("Invalid listen address")
 	}
 
 	listenIsIP4 := listenAddress.To4() != nil
@@ -1340,7 +1339,7 @@ func (n *common) loadBalancerValidate(listenAddress net.IP, forward *api.Network
 				return nil, fmt.Errorf("Invalid backend port specification %d in backend specification %d: %w", portSpecID, backendSpecID, err)
 			}
 
-			for i := int64(0); i < portRange; i++ {
+			for i := range portRange {
 				port := portFirst + i
 				target.ports = append(target.ports, uint64(port))
 			}
@@ -1374,7 +1373,7 @@ func (n *common) loadBalancerValidate(listenAddress net.IP, forward *api.Network
 				return nil, fmt.Errorf("Invalid listen port in port specification %d: %w", portSpecID, err)
 			}
 
-			for i := int64(0); i < portRange; i++ {
+			for i := range portRange {
 				port := portFirst + i
 				_, found := listenPorts[portSpec.Protocol][port]
 				if found {

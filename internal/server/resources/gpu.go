@@ -3,6 +3,7 @@ package resources
 import (
 	"bufio"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,7 +29,7 @@ func loadNvidiaProc() (map[string]*api.ResourcesGPUCardNvidia, error) {
 
 	gpusPath := filepath.Join(procDriverNvidia, "gpus")
 	if !sysfsExists(gpusPath) {
-		return nil, fmt.Errorf("No NVIDIA GPU proc driver")
+		return nil, errors.New("No NVIDIA GPU proc driver")
 	}
 
 	// List the GPUs from /proc
@@ -289,9 +290,10 @@ func gpuAddDeviceInfo(devicePath string, nvidiaCards map[string]*api.ResourcesGP
 			entryName := entry.Name()
 			entryPath := filepath.Join(drmPath, entryName)
 
-			if strings.HasPrefix(entryName, "card") {
+			after, ok := strings.CutPrefix(entryName, "card")
+			if ok {
 				// Get the card ID
-				idStr := strings.TrimPrefix(entryName, "card")
+				idStr := after
 				id, err := strconv.ParseUint(idStr, 10, 64)
 				if err != nil {
 					return fmt.Errorf("Failed to parse card number: %w", err)

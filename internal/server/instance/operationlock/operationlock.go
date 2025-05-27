@@ -2,7 +2,9 @@ package operationlock
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/lxc/incus/v6/internal/server/operations"
@@ -42,7 +44,7 @@ const ActionConsoleRetrieve Action = "console_retrieve"
 
 // ErrNonReusuableSucceeded is returned when no operation is created due to having to wait for a matching
 // non-reusuable operation that has now completed successfully.
-var ErrNonReusuableSucceeded error = fmt.Errorf("A matching non-reusable operation has now succeeded")
+var ErrNonReusuableSucceeded error = errors.New("A matching non-reusable operation has now succeeded")
 
 var (
 	instanceOperationsLock sync.Mutex
@@ -67,7 +69,7 @@ type InstanceOperation struct {
 // which will then trigger a reset of the timeout to TimeoutDefault on the existing lock and return it.
 func Create(projectName string, instanceName string, apiOp *operations.Operation, action Action, createReusuable bool, reuseExisting bool) (*InstanceOperation, error) {
 	if projectName == "" || instanceName == "" {
-		return nil, fmt.Errorf("Invalid project or instance name")
+		return nil, errors.New("Invalid project or instance name")
 	}
 
 	instanceOperationsLock.Lock()
@@ -171,13 +173,7 @@ func (op *InstanceOperation) Action() Action {
 
 // ActionMatch returns true if operation's action matches one of the matchActions.
 func (op *InstanceOperation) ActionMatch(matchActions ...Action) bool {
-	for _, matchAction := range matchActions {
-		if op.action == matchAction {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(matchActions, op.action)
 }
 
 // Wait waits for an operation to finish.

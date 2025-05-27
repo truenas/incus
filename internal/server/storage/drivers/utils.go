@@ -166,7 +166,7 @@ func TryMount(src string, dst string, fs string, flags uintptr, options string) 
 	var err error
 
 	// Attempt 20 mounts over 10s
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		err = unix.Mount(src, dst, fs, flags, options)
 		if err == nil {
 			break
@@ -186,7 +186,7 @@ func TryMount(src string, dst string, fs string, flags uintptr, options string) 
 func TryUnmount(path string, flags int) error {
 	var err error
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		err = unix.Unmount(path, flags)
 		if err == nil {
 			break
@@ -206,7 +206,7 @@ func TryUnmount(path string, flags int) error {
 // tryExists waits up to 10s for a file to exist.
 func tryExists(path string) bool {
 	// Attempt 20 checks over 10s
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		if util.PathExists(path) {
 			return true
 		}
@@ -329,7 +329,7 @@ func ensureSparseFile(filePath string, sizeBytes int64) error {
 // instead return ErrNotSupported.
 func ensureVolumeBlockFile(vol Volume, path string, sizeBytes int64, allowUnsafeResize bool, unsupportedResizeTypes ...VolumeType) (bool, error) {
 	if sizeBytes <= 0 {
-		return false, fmt.Errorf("Size cannot be zero")
+		return false, errors.New("Size cannot be zero")
 	}
 
 	// Get rounded block size to avoid QEMU boundary issues.
@@ -356,10 +356,8 @@ func ensureVolumeBlockFile(vol Volume, path string, sizeBytes int64, allowUnsafe
 			// Reject if would try and resize a volume type that is not supported.
 			// This needs to come before the ErrCannotBeShrunk check below so that any resize attempt
 			// is blocked with ErrNotSupported error.
-			for _, unsupportedType := range unsupportedResizeTypes {
-				if unsupportedType == vol.volType {
-					return false, ErrNotSupported
-				}
+			if slices.Contains(unsupportedResizeTypes, vol.volType) {
+				return false, ErrNotSupported
 			}
 
 			if sizeBytes < oldSizeBytes {
@@ -580,7 +578,7 @@ func regenerateFilesystemUUID(fsType string, devPath string) error {
 		return regenerateFilesystemXFSUUID(devPath)
 	}
 
-	return fmt.Errorf("Filesystem not supported")
+	return errors.New("Filesystem not supported")
 }
 
 // regenerateFilesystemBTRFSUUID changes the BTRFS filesystem UUID to a new randomly generated one.
@@ -863,7 +861,7 @@ func loopFileSizeDefault() (uint64, error) {
 		return gibAvailable, nil // Need at least 5GiB free.
 	}
 
-	return 0, fmt.Errorf("Insufficient free space to create default sized 5GiB pool")
+	return 0, errors.New("Insufficient free space to create default sized 5GiB pool")
 }
 
 // loopFileSetup sets up a loop device for the provided sourcePath.
@@ -986,13 +984,7 @@ func (sfw *SparseFileWrapper) Write(p []byte) (n int, err error) {
 
 // sliceAny returns true when any element in a slice satisfy a predicate.
 func sliceAny[T any](slice []T, predicate func(T) bool) bool {
-	for _, element := range slice {
-		if predicate(element) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(slice, predicate)
 }
 
 // roundAbove returns the next multiple of `above` greater than `val`.

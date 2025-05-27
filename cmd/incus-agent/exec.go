@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -54,15 +55,13 @@ func execPost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	if !post.WaitForWS {
-		return response.BadRequest(fmt.Errorf("Websockets are required for VM exec"))
+		return response.BadRequest(errors.New("Websockets are required for VM exec"))
 	}
 
 	env := map[string]string{}
 
 	if post.Environment != nil {
-		for k, v := range post.Environment {
-			env[k] = v
-		}
+		maps.Copy(env, post.Environment)
 	}
 
 	osSetEnv(&post, env)
@@ -148,7 +147,7 @@ func (s *execWs) Metadata() any {
 func (s *execWs) Connect(op *operations.Operation, r *http.Request, w http.ResponseWriter) error {
 	secret := r.FormValue("secret")
 	if secret == "" {
-		return fmt.Errorf("missing secret")
+		return errors.New("missing secret")
 	}
 
 	for fd, fdSecret := range s.fds {
@@ -174,9 +173,9 @@ func (s *execWs) Connect(op *operations.Operation, r *http.Request, w http.Respo
 				s.requiredConnectedDone() // All required connections now connected.
 				return nil
 			} else if !found {
-				return fmt.Errorf("Unknown websocket number")
+				return errors.New("Unknown websocket number")
 			} else {
-				return fmt.Errorf("Websocket number already connected")
+				return errors.New("Websocket number already connected")
 			}
 		}
 	}
@@ -205,7 +204,7 @@ func (s *execWs) Do(op *operations.Operation) error {
 	case <-s.requiredConnectedCtx.Done():
 		break
 	case <-time.After(time.Second * 5):
-		return fmt.Errorf("Timed out waiting for websockets to connect")
+		return errors.New("Timed out waiting for websockets to connect")
 	}
 
 	var err error
@@ -231,7 +230,7 @@ func (s *execWs) Do(op *operations.Operation) error {
 	} else {
 		ttys = make([]io.ReadWriteCloser, 3)
 		ptys = make([]io.ReadWriteCloser, 3)
-		for i := 0; i < len(ttys); i++ {
+		for i := range ttys {
 			ptys[i], ttys[i], err = os.Pipe()
 			if err != nil {
 				return err
@@ -390,7 +389,7 @@ func (s *execWs) Do(op *operations.Operation) error {
 		}()
 	} else {
 		wgEOF.Add(len(ttys) - 1)
-		for i := 0; i < len(ttys); i++ {
+		for i := range ttys {
 			go func(i int) {
 				l.Debug("Exec mirror websocket started", logger.Ctx{"number": i})
 				defer l.Debug("Exec mirror websocket finished", logger.Ctx{"number": i})

@@ -205,7 +205,7 @@ func getCPUdmi() (string, string, error) {
 		}
 	}
 
-	return "", "", fmt.Errorf("No DMI table found")
+	return "", "", errors.New("No DMI table found")
 }
 
 // GetCPU returns a filled api.ResourcesCPU struct ready for use by Incus.
@@ -256,7 +256,7 @@ func GetCPU() (*api.ResourcesCPU, error) {
 		threadIDs = append(threadIDs, id)
 	}
 
-	sort.Slice(threadIDs, func(i, j int) bool { return threadIDs[i] < threadIDs[j] })
+	slices.Sort(threadIDs)
 
 	// CPU flags
 	var flagList []string

@@ -2,7 +2,6 @@ package endpoints
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"math/rand"
 	"net"
@@ -15,7 +14,7 @@ import (
 )
 
 func createVsockListener(cert *localtls.CertInfo) (net.Listener, error) {
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		// Get random port between 1024 and 65535.
 		port := 1024 + rand.Int31n(math.MaxUint16-1024)
 
@@ -33,7 +32,7 @@ func createVsockListener(cert *localtls.CertInfo) (net.Listener, error) {
 		return listeners.NewFancyTLSListener(listener, cert), nil
 	}
 
-	return nil, fmt.Errorf("Failed finding free listen port for vsock listener")
+	return nil, errors.New("Failed finding free listen port for vsock listener")
 }
 
 // VsockAddress returns the network address of the vsock endpoint, or nil if there's no vsock endpoint.

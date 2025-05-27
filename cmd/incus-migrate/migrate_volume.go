@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -60,6 +61,14 @@ func (m *VolumeMigration) gatherInfo() error {
 	if m.project != "" {
 		m.server = m.server.UseProject(m.project)
 	}
+
+	// Target
+	err = m.askTarget()
+	if err != nil {
+		return err
+	}
+
+	m.server = m.server.UseTarget(m.target)
 
 	// Pool
 	pools, err := m.server.GetStoragePools()
@@ -144,7 +153,7 @@ func (m *VolumeMigration) gatherInfo() error {
 // migrate performs the custom volume migration.
 func (m *VolumeMigration) migrate() error {
 	if m.migrationType != MigrationTypeVolumeBlock && m.migrationType != MigrationTypeVolumeFilesystem {
-		return fmt.Errorf("Wrong migration type for migrate")
+		return errors.New("Wrong migration type for migrate")
 	}
 
 	// User decided not to migrate.
@@ -232,7 +241,7 @@ func (m *VolumeMigration) render() string {
 
 func (m *VolumeMigration) setMigrationType() error {
 	if m.sourcePath == "" {
-		return fmt.Errorf("Missing source path")
+		return errors.New("Missing source path")
 	}
 
 	if internalUtil.IsDir(m.sourcePath) {

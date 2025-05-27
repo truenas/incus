@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -118,7 +119,7 @@ const qemuMigrationNBDExportName = "incus_root"
 // 4 are reserved, and the other 4 can be used for any USB device.
 const qemuSparseUSBPorts = 8
 
-var errQemuAgentOffline = fmt.Errorf("VM agent isn't currently running")
+var errQemuAgentOffline = errors.New("VM agent isn't currently running")
 
 type monitorHook func(m *qmp.Monitor) error
 
@@ -275,7 +276,7 @@ func qemuCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operati
 	}
 
 	if rootDiskDevice["pool"] == "" {
-		return nil, nil, fmt.Errorf("The instance's root device is missing the pool property")
+		return nil, nil, errors.New("The instance's root device is missing the pool property")
 	}
 
 	// Initialize the storage pool.
@@ -289,16 +290,10 @@ func qemuCreate(s *state.State, args db.InstanceArgs, p api.Project, op *operati
 		return nil, nil, err
 	}
 
-	storagePoolSupported := false
-	for _, supportedType := range d.storagePool.Driver().Info().VolumeTypes {
-		if supportedType == volType {
-			storagePoolSupported = true
-			break
-		}
-	}
+	storagePoolSupported := slices.Contains(d.storagePool.Driver().Info().VolumeTypes, volType)
 
 	if !storagePoolSupported {
-		return nil, nil, fmt.Errorf("Storage pool does not support instance type")
+		return nil, nil, errors.New("Storage pool does not support instance type")
 	}
 
 	if !d.IsSnapshot() {
@@ -923,7 +918,7 @@ func (d *qemu) restoreState(monitor *qmp.Monitor) error {
 	if d.migrationReceiveStateful != nil {
 		stateConn := d.migrationReceiveStateful[api.SecretNameState]
 		if stateConn == nil {
-			return fmt.Errorf("Migration state connection is not initialized")
+			return errors.New("Migration state connection is not initialized")
 		}
 
 		// Perform non-shared storage transfer if requested.
@@ -1101,7 +1096,7 @@ func (d *qemu) validateStartup(stateful bool, statusCode api.StatusCode) error {
 
 	// Cannot perform stateful start unless config is appropriately set.
 	if stateful && util.IsFalseOrEmpty(d.expandedConfig["migration.stateful"]) {
-		return fmt.Errorf("Stateful start requires migration.stateful to be set to true")
+		return errors.New("Stateful start requires migration.stateful to be set to true")
 	}
 
 	// gendoc:generate(entity=image, group=requirements, key=requirements.secureboot)
@@ -1112,12 +1107,12 @@ func (d *qemu) validateStartup(stateful bool, statusCode api.StatusCode) error {
 	//
 	// Ensure secureboot is turned off for images that are not secureboot enabled.
 	if util.IsFalse(d.localConfig["image.requirements.secureboot"]) && util.IsTrueOrEmpty(d.expandedConfig["security.secureboot"]) {
-		return fmt.Errorf("The image used by this instance is incompatible with secureboot. Please set security.secureboot=false on the instance")
+		return errors.New("The image used by this instance is incompatible with secureboot. Please set security.secureboot=false on the instance")
 	}
 
 	// Ensure secureboot is turned off when CSM is on.
 	if util.IsTrue(d.expandedConfig["security.csm"]) && util.IsTrueOrEmpty(d.expandedConfig["security.secureboot"]) {
-		return fmt.Errorf("Secure boot can't be enabled while CSM is turned on. Please set security.secureboot=false on the instance")
+		return errors.New("Secure boot can't be enabled while CSM is turned on. Please set security.secureboot=false on the instance")
 	}
 
 	// gendoc:generate(entity=image, group=requirements, key=requirements.cdrom_agent)
@@ -1137,7 +1132,7 @@ func (d *qemu) validateStartup(stateful bool, statusCode api.StatusCode) error {
 		}
 
 		if !found {
-			return fmt.Errorf("This virtual machine image requires an agent:config disk be added")
+			return errors.New("This virtual machine image requires an agent:config disk be added")
 		}
 	}
 
@@ -1181,7 +1176,7 @@ func (d *qemu) checkStateStorage() error {
 	}
 
 	if stateDiskSize < memoryLimit {
-		return fmt.Errorf("Stateful stop and snapshots require that the instance limits.memory is less than size.state on the root disk device")
+		return errors.New("Stateful stop and snapshots require the instance limits.memory be less than or equal to the root disk size.state property")
 	}
 
 	return nil
@@ -1634,6 +1629,11 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		}
 	}
 
+	if util.IsFalseOrEmpty(d.expandedConfig["migration.stateful"]) {
+		// Add +invtsc for fast TSC when not expected to be migratable.
+		cpuExtensions = append(cpuExtensions, "migratable=no", "+invtsc")
+	}
+
 	if len(cpuExtensions) > 0 {
 		cpuType += "," + strings.Join(cpuExtensions, ",")
 	}
@@ -1953,7 +1953,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 
 		// Confirm nothing weird is going on.
 		if len(cpuInfo.vcpus) != len(pids) {
-			err = fmt.Errorf("QEMU has less vCPUs than configured")
+			err = errors.New("QEMU has less vCPUs than configured")
 			op.Done(err)
 			return err
 		}
@@ -2191,7 +2191,7 @@ func (d *qemu) getAgentConnectionInfo() (*agentAPI.API10Put, error) {
 
 	vsockaddr, ok := addr.(*vsock.Addr)
 	if !ok {
-		return nil, fmt.Errorf("Listen address is not vsock.Addr")
+		return nil, errors.New("Listen address is not vsock.Addr")
 	}
 
 	req := agentAPI.API10Put{
@@ -2367,7 +2367,7 @@ func (d *qemu) qemuArchConfig(arch int) (string, string, error) {
 		return path, "ccw", nil
 	}
 
-	return "", "", fmt.Errorf("Architecture isn't supported for virtual machines")
+	return "", "", errors.New("Architecture isn't supported for virtual machines")
 }
 
 // RegisterDevices calls the Register() function on all of the instance's devices.
@@ -2410,7 +2410,7 @@ func (d *qemu) deviceStart(dev device.Device, instanceRunning bool) (*deviceConf
 	defer reverter.Fail()
 
 	if instanceRunning && !dev.CanHotPlug() {
-		return nil, fmt.Errorf("Device cannot be started when instance is running")
+		return nil, errors.New("Device cannot be started when instance is running")
 	}
 
 	runConf, err := dev.Start()
@@ -2490,7 +2490,7 @@ func (d *qemu) deviceAttachPath(deviceName string, configCopy map[string]string,
 	// Detect virtiofsd path.
 	virtiofsdSockPath := filepath.Join(d.DevicesPath(), fmt.Sprintf("virtio-fs.%s.sock", deviceName))
 	if !util.PathExists(virtiofsdSockPath) {
-		return fmt.Errorf("Virtiofsd isn't running")
+		return errors.New("Virtiofsd isn't running")
 	}
 
 	reverter := revert.New()
@@ -2683,7 +2683,7 @@ func (d *qemu) deviceAttachNIC(deviceName string, configCopy map[string]string, 
 	}
 
 	if devName == "" {
-		return fmt.Errorf("Device didn't provide a link property to use")
+		return errors.New("Device didn't provide a link property to use")
 	}
 
 	_, qemuBus, err := d.qemuArchConfig(d.architecture)
@@ -2754,7 +2754,7 @@ func (d *qemu) getPCIHotplug() (string, error) {
 		return dev.DevID, nil
 	}
 
-	return "", fmt.Errorf("No available PCI hotplug slots could be found")
+	return "", errors.New("No available PCI hotplug slots could be found")
 }
 
 // deviceAttachPCI live attaches a generic PCI device to the instance.
@@ -2787,7 +2787,7 @@ func (d *qemu) deviceAttachPCI(deviceName string, configCopy map[string]string, 
 	}
 
 	if !slices.Contains([]string{"pcie", "pci"}, qemuBus) {
-		return fmt.Errorf("Attempting PCI passthrough on a non-PCI system")
+		return errors.New("Attempting PCI passthrough on a non-PCI system")
 	}
 
 	// Try to get a PCI address for hotplugging.
@@ -2809,7 +2809,7 @@ func (d *qemu) deviceAttachPCI(deviceName string, configCopy map[string]string, 
 
 	if d.state.OS.UnprivUser != "" {
 		if pciIOMMUGroup == "" {
-			return fmt.Errorf("No PCI IOMMU group supplied")
+			return errors.New("No PCI IOMMU group supplied")
 		}
 
 		vfioGroupFile := fmt.Sprintf("/dev/vfio/%s", pciIOMMUGroup)
@@ -2834,7 +2834,7 @@ func (d *qemu) deviceStop(dev device.Device, instanceRunning bool, _ string) err
 	l.Debug("Stopping device")
 
 	if instanceRunning && !dev.CanHotPlug() {
-		return fmt.Errorf("Device cannot be stopped when instance is running")
+		return errors.New("Device cannot be stopped when instance is running")
 	}
 
 	runConf, err := dev.Stop()
@@ -3344,13 +3344,7 @@ func (d *qemu) templateApplyNow(trigger instance.TemplateTrigger, path string) e
 			var w *os.File
 
 			// Check if the template should be applied now.
-			found := false
-			for _, tplTrigger := range tpl.When {
-				if tplTrigger == string(trigger) {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(tpl.When, string(trigger))
 
 			if !found {
 				return nil
@@ -3899,7 +3893,7 @@ func (d *qemu) generateQemuConfig(machineDefinition string, cpuInfo *cpuTopology
 	}
 
 	// Allocate 8 PCI slots for hotplug devices.
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		bus.allocate(busFunctionGroupNone)
 	}
 
@@ -3995,9 +3989,9 @@ func (d *qemu) getCPUOpts(cpuInfo *cpuTopology, memSizeBytes int64) (*qemuCPUOpt
 		vcpuCore := map[uint64]uint64{}
 		vcpuThread := map[uint64]uint64{}
 		vcpu := uint64(0)
-		for i := 0; i < cpuInfo.sockets; i++ {
-			for j := 0; j < cpuInfo.cores; j++ {
-				for k := 0; k < cpuInfo.threads; k++ {
+		for i := range cpuInfo.sockets {
+			for j := range cpuInfo.cores {
+				for k := range cpuInfo.threads {
 					vcpuSocket[vcpu] = uint64(i)
 					vcpuCore[vcpu] = uint64(j)
 					vcpuThread[vcpu] = uint64(k)
@@ -4103,11 +4097,11 @@ func (d *qemu) addFileDescriptor(fdFiles *[]*os.File, file *os.File) int {
 // addRootDriveConfig adds the qemu config required for adding the root drive.
 func (d *qemu) addRootDriveConfig(qemuDev map[string]any, mountInfo *storagePools.MountInfo, bootIndexes map[string]int, rootDriveConf deviceConfig.MountEntryItem) (monitorHook, error) {
 	if rootDriveConf.TargetPath != "/" {
-		return nil, fmt.Errorf("Non-root drive config supplied")
+		return nil, errors.New("Non-root drive config supplied")
 	}
 
 	if !d.storagePool.Driver().Info().Remote && mountInfo.DiskPath == "" {
-		return nil, fmt.Errorf("No root disk path available from mount")
+		return nil, errors.New("No root disk path available from mount")
 	}
 
 	// Generate a new device config with the root device path expanded.
@@ -4268,7 +4262,7 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 			// Extract original dev path for additional probing below.
 			srcDevPath = devPathParts[2]
 			if srcDevPath == "" {
-				return nil, fmt.Errorf("Device source path is empty")
+				return nil, errors.New("Device source path is empty")
 			}
 
 			driveConf.DevPath = fmt.Sprintf("/proc/self/fd/%d", fd)
@@ -4594,10 +4588,7 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 	// Returns the number of queues to use with NIC.
 	configureQueues := func(cpuCount int) int {
 		// Number of queues is the same as number of vCPUs. Run with a minimum of two queues.
-		queueCount := cpuCount
-		if queueCount < 2 {
-			queueCount = 2
-		}
+		queueCount := max(cpuCount, 2)
 
 		// Number of vectors is number of vCPUs * 2 (RX/TX) + 2 (config/control MSI-X).
 		vectors := 2*queueCount + 2
@@ -4620,7 +4611,7 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 
 			cpus, err := m.QueryCPUs()
 			if err != nil {
-				return fmt.Errorf("Failed getting CPU list for NIC queues")
+				return errors.New("Failed getting CPU list for NIC queues")
 			}
 
 			queueCount := configureQueues(len(cpus))
@@ -4632,7 +4623,7 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 			// Open the device once for each queue and pass to QEMU.
 			fds := make([]string, 0, queueCount)
 			vhostfds := make([]string, 0, queueCount)
-			for i := 0; i < queueCount; i++ {
+			for i := range queueCount {
 				devFile, err := deviceFile()
 				if err != nil {
 					return fmt.Errorf("Error opening netdev file for queue %d: %w", i, err)
@@ -4823,7 +4814,7 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 
 		if d.state.OS.UnprivUser != "" {
 			if pciIOMMUGroup == "" {
-				return nil, fmt.Errorf("No PCI IOMMU group supplied")
+				return nil, errors.New("No PCI IOMMU group supplied")
 			}
 
 			vfioGroupFile := fmt.Sprintf("/dev/vfio/%s", pciIOMMUGroup)
@@ -4846,7 +4837,7 @@ func (d *qemu) addNetDevConfig(busName string, qemuDev map[string]any, bootIndex
 	}
 
 	if monHook == nil {
-		return nil, fmt.Errorf("Unrecognised device type")
+		return nil, errors.New("Unrecognised device type")
 	}
 
 	reverter.Success()
@@ -5135,7 +5126,7 @@ func (d *qemu) pid() (int, error) {
 	qemuSearchString := []byte("qemu-system")
 	instUUID := []byte(d.localConfig["volatile.uuid"])
 	if !bytes.Contains(cmdLine, qemuSearchString) || !bytes.Contains(cmdLine, instUUID) {
-		return -1, fmt.Errorf("PID doesn't match the running process")
+		return -1, errors.New("PID doesn't match the running process")
 	}
 
 	return pid, nil
@@ -5171,7 +5162,7 @@ func (d *qemu) Stop(stateful bool) error {
 	if stateful {
 		// Confirm the instance has stateful migration enabled.
 		if util.IsFalseOrEmpty(d.expandedConfig["migration.stateful"]) {
-			return fmt.Errorf("Stateful stop requires migration.stateful to be set to true")
+			return errors.New("Stateful stop requires migration.stateful to be set to true")
 		}
 
 		// Confirm the instance has sufficient reserved state space.
@@ -5337,7 +5328,7 @@ func (d *qemu) snapshot(name string, expiry time.Time, stateful bool) error {
 	if stateful {
 		// Confirm the instance has stateful migration enabled.
 		if util.IsFalseOrEmpty(d.expandedConfig["migration.stateful"]) {
-			return fmt.Errorf("Stateful snapshot requires migration.stateful to be set to true")
+			return errors.New("Stateful snapshot requires migration.stateful to be set to true")
 		}
 
 		// Confirm the instance has sufficient reserved state space.
@@ -5348,7 +5339,7 @@ func (d *qemu) snapshot(name string, expiry time.Time, stateful bool) error {
 
 		// Quick checks.
 		if !d.IsRunning() {
-			return fmt.Errorf("Unable to create a stateful snapshot. The instance isn't running")
+			return errors.New("Unable to create a stateful snapshot. The instance isn't running")
 		}
 
 		// Connect to the monitor.
@@ -5532,7 +5523,7 @@ func (d *qemu) Rename(newName string, applyTemplateTrigger bool) error {
 	}
 
 	if d.IsRunning() {
-		return fmt.Errorf("Renaming of running instance not allowed")
+		return errors.New("Renaming of running instance not allowed")
 	}
 
 	// Clean things up.
@@ -5765,7 +5756,7 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 		}
 
 		if slices.Contains(checkedProfiles, profile.Name) {
-			return fmt.Errorf("Duplicate profile found in request")
+			return errors.New("Duplicate profile found in request")
 		}
 
 		checkedProfiles = append(checkedProfiles, profile.Name)
@@ -5900,18 +5891,18 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 
 				oldDev, ok := removeDevices[devName]
 				if !ok {
-					return fmt.Errorf("New device with initial configuration cannot be added once the instance is created")
+					return errors.New("New device with initial configuration cannot be added once the instance is created")
 				}
 
 				oldVal, ok := oldDev[k]
 				if !ok {
-					return fmt.Errorf("Device initial configuration cannot be added once the instance is created")
+					return errors.New("Device initial configuration cannot be added once the instance is created")
 				}
 
 				// If newVal is an empty string it means the initial configuration
 				// has been removed.
 				if newVal != "" && newVal != oldVal {
-					return fmt.Errorf("Device initial configuration cannot be modified once the instance is created")
+					return errors.New("Device initial configuration cannot be modified once the instance is created")
 				}
 			}
 		}
@@ -6036,7 +6027,7 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 
 				limit, err := strconv.Atoi(value)
 				if err != nil {
-					return fmt.Errorf("Cannot change CPU pinning when VM is running")
+					return errors.New("Cannot change CPU pinning when VM is running")
 				}
 
 				// Hotplug the CPUs.
@@ -6229,7 +6220,7 @@ func (d *qemu) updateMemoryLimit(newLimit string) error {
 	}
 
 	if util.IsTrue(d.expandedConfig["limits.memory.hugepages"]) {
-		return fmt.Errorf("Cannot live update memory limit when using huge pages")
+		return errors.New("Cannot live update memory limit when using huge pages")
 	}
 
 	// Check new size string is valid and convert to bytes.
@@ -6274,7 +6265,7 @@ func (d *qemu) updateMemoryLimit(newLimit string) error {
 
 	// Changing the memory balloon can take time, so poll the effective size to check it has shrunk within 1%
 	// of the target size, which we then take as success (it may still continue to shrink closer to target).
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		curSizeBytes, err = monitor.GetMemoryBalloonSizeBytes()
 		if err != nil {
 			return err
@@ -6546,7 +6537,7 @@ func (d *qemu) delete(force bool) error {
 
 	// Check if instance is delete protected.
 	if !force && util.IsTrue(d.expandedConfig["security.protection.delete"]) && !d.IsSnapshot() {
-		return fmt.Errorf("Instance is protected")
+		return errors.New("Instance is protected")
 	}
 
 	// Delete any persistent warnings for instance.
@@ -6643,7 +6634,7 @@ func (d *qemu) Export(metaWriter io.Writer, rootfsWriter io.Writer, properties m
 	}
 
 	if d.IsRunning() {
-		return nil, fmt.Errorf("Cannot export a running instance as an image")
+		return nil, errors.New("Cannot export a running instance as an image")
 	}
 
 	d.logger.Info("Exporting instance", ctxMap)
@@ -6731,9 +6722,7 @@ func (d *qemu) Export(metaWriter io.Writer, rootfsWriter io.Writer, properties m
 		meta.Properties = map[string]string{}
 	}
 
-	for k, v := range properties {
-		meta.Properties[k] = v
-	}
+	maps.Copy(meta.Properties, properties)
 
 	if !expiration.IsZero() {
 		meta.ExpiryDate = expiration.UTC().Unix()
@@ -6790,7 +6779,7 @@ func (d *qemu) Export(metaWriter io.Writer, rootfsWriter io.Writer, properties m
 	defer func() { _ = os.RemoveAll(tmpPath) }()
 
 	if mountInfo.DiskPath == "" {
-		return nil, fmt.Errorf("No disk path available from mount")
+		return nil, errors.New("No disk path available from mount")
 	}
 
 	fPath := fmt.Sprintf("%s/rootfs.img", tmpPath)
@@ -6880,7 +6869,7 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 
 	// Check for stateful support.
 	if args.Live && util.IsFalseOrEmpty(d.expandedConfig["migration.stateful"]) {
-		return fmt.Errorf("Live migration requires migration.stateful to be set to true")
+		return errors.New("Live migration requires migration.stateful to be set to true")
 	}
 
 	// Setup a new operation.
@@ -6917,7 +6906,7 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 	// The same applies for clusterMove and storageMove, which are set to the most optimized defaults.
 	poolMigrationTypes := pool.MigrationTypes(storagePools.InstanceContentType(d), false, args.Snapshots, true, false)
 	if len(poolMigrationTypes) == 0 {
-		err := fmt.Errorf("No source migration types available")
+		err := errors.New("No source migration types available")
 		op.Done(err)
 		return err
 	}
@@ -7540,7 +7529,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			}
 
 			if rootDiskDevice["pool"] == "" {
-				return fmt.Errorf("The instance's root device is missing the pool property")
+				return errors.New("The instance's root device is missing the pool property")
 			}
 
 			// Initialize the storage pool cache.
@@ -7577,10 +7566,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 	// Respond with our maximum supported header version if the requested version is higher than ours.
 	// Otherwise just return the requested header version to the source.
-	indexHeaderVersion := offerHeader.GetIndexHeaderVersion()
-	if indexHeaderVersion > localMigration.IndexHeaderVersion {
-		indexHeaderVersion = localMigration.IndexHeaderVersion
-	}
+	indexHeaderVersion := min(offerHeader.GetIndexHeaderVersion(), localMigration.IndexHeaderVersion)
 
 	respHeader.IndexHeaderVersion = &indexHeaderVersion
 	respHeader.SnapshotNames = offerHeader.SnapshotNames
@@ -7780,7 +7766,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		}
 
 		if parentStoragePool == "" {
-			return fmt.Errorf("Instance's root device is missing the pool property")
+			return errors.New("Instance's root device is missing the pool property")
 		}
 
 		// A zero length Snapshots slice indicates volume only migration in
@@ -7982,7 +7968,7 @@ func (d *qemu) CGroup() (*cgroup.CGroup, error) {
 func (d *qemu) FileSFTPConn() (net.Conn, error) {
 	// VMs, unlike containers, cannot perform file operations if not running and using the agent.
 	if !d.IsRunning() {
-		return nil, fmt.Errorf("Instance is not running")
+		return nil, errors.New("Instance is not running")
 	}
 
 	// Connect to the agent.
@@ -8039,7 +8025,7 @@ func (d *qemu) FileSFTPConn() (net.Conn, error) {
 	}
 
 	if resp.Header.Get("Upgrade") != "sftp" {
-		return nil, fmt.Errorf("Missing or unexpected Upgrade header in response")
+		return nil, errors.New("Missing or unexpected Upgrade header in response")
 	}
 
 	return tlsConn, nil
@@ -8148,7 +8134,7 @@ func (d *qemu) Exec(req api.InstanceExecPost, stdin *os.File, stdout *os.File, s
 	agent, err := incus.ConnectIncusHTTP(nil, client)
 	if err != nil {
 		d.logger.Error("Failed to connect to the agent", logger.Ctx{"err": err})
-		return nil, fmt.Errorf("Failed to connect to the agent")
+		return nil, errors.New("Failed to connect to the agent")
 	}
 
 	reverter.Add(agent.Disconnect)
@@ -8296,7 +8282,7 @@ func (d *qemu) Render() (any, any, error) {
 // RenderFull returns all info about the instance.
 func (d *qemu) RenderFull(hostInterfaces []net.Interface) (*api.InstanceFull, any, error) {
 	if d.IsSnapshot() {
-		return nil, nil, fmt.Errorf("RenderFull doesn't work with snapshots")
+		return nil, nil, errors.New("RenderFull doesn't work with snapshots")
 	}
 
 	// Pre-fetch the data.
@@ -8525,7 +8511,7 @@ func (d *qemu) CanMigrate() string {
 // LockExclusive attempts to get exclusive access to the instance's root volume.
 func (d *qemu) LockExclusive() (*operationlock.InstanceOperation, error) {
 	if d.IsRunning() {
-		return nil, fmt.Errorf("Instance is running")
+		return nil, errors.New("Instance is running")
 	}
 
 	// Prevent concurrent operations the instance.
@@ -8626,7 +8612,7 @@ func (d *qemu) reservedVsockID(vsockID uint32) bool {
 func (d *qemu) getVsockID() (uint32, error) {
 	existingVsockID, ok := d.localConfig["volatile.vsock_id"]
 	if !ok {
-		return 0, fmt.Errorf("Context ID not set in volatile.vsock_id")
+		return 0, errors.New("Context ID not set in volatile.vsock_id")
 	}
 
 	vsockID, err := strconv.ParseUint(existingVsockID, 10, 32)
@@ -8718,7 +8704,7 @@ func (d *qemu) nextVsockID() (uint32, *os.File, error) {
 	// Try to find a new Context ID.
 	for {
 		if time.Now().After(timeout) {
-			return 0, nil, fmt.Errorf("Timeout exceeded whilst trying to acquire the next vsock Context ID")
+			return 0, nil, errors.New("Timeout exceeded whilst trying to acquire the next vsock Context ID")
 		}
 
 		candidateVsockID := r.Uint32()
@@ -9061,7 +9047,7 @@ func (d *qemu) devIncusEventSend(eventType string, eventMessage map[string]any) 
 	agent, err := incus.ConnectIncusHTTP(agentArgs, client)
 	if err != nil {
 		d.logger.Error("Failed to connect to the agent", logger.Ctx{"err": err})
-		return fmt.Errorf("Failed to connect to the agent")
+		return errors.New("Failed to connect to the agent")
 	}
 
 	defer agent.Disconnect()
@@ -9080,29 +9066,29 @@ func (d *qemu) Info() instance.Info {
 		Name:     "qemu",
 		Features: make(map[string]any),
 		Type:     instancetype.VM,
-		Error:    fmt.Errorf("Unknown error"),
+		Error:    errors.New("Unknown error"),
 	}
 
 	if !util.PathExists("/dev/kvm") {
-		data.Error = fmt.Errorf("KVM support is missing (no /dev/kvm)")
+		data.Error = errors.New("KVM support is missing (no /dev/kvm)")
 		return data
 	}
 
 	err := linux.LoadModule("vhost_vsock")
 	if err != nil {
-		data.Error = fmt.Errorf("vhost_vsock kernel module not loaded")
+		data.Error = errors.New("vhost_vsock kernel module not loaded")
 		return data
 	}
 
 	if !util.PathExists("/dev/vsock") {
-		data.Error = fmt.Errorf("Vsock support is missing (no /dev/vsock)")
+		data.Error = errors.New("Vsock support is missing (no /dev/vsock)")
 		return data
 	}
 
 	hostArch, err := osarch.ArchitectureGetLocalID()
 	if err != nil {
 		logger.Errorf("Failed getting CPU architecture during QEMU initialization: %v", err)
-		data.Error = fmt.Errorf("Failed getting CPU architecture")
+		data.Error = errors.New("Failed getting CPU architecture")
 		return data
 	}
 
@@ -9115,7 +9101,7 @@ func (d *qemu) Info() instance.Info {
 	out, err := exec.Command(qemuPath, "--version").Output()
 	if err != nil {
 		logger.Errorf("Failed getting version during QEMU initialization: %v", err)
-		data.Error = fmt.Errorf("Failed getting QEMU version")
+		data.Error = errors.New("Failed getting QEMU version")
 		return data
 	}
 
@@ -9130,7 +9116,7 @@ func (d *qemu) Info() instance.Info {
 	data.Features, err = d.checkFeatures(hostArch, qemuPath)
 	if err != nil {
 		logger.Errorf("Unable to run feature checks during QEMU initialization: %v", err)
-		data.Error = fmt.Errorf("QEMU failed to run feature checks")
+		data.Error = errors.New("QEMU failed to run feature checks")
 		return data
 	}
 
@@ -9183,7 +9169,7 @@ func (d *qemu) checkFeatures(hostArch int, qemuPath string) (map[string]any, err
 		}
 
 		if efiPath == "" {
-			return nil, fmt.Errorf("Unable to locate a UEFI firmware")
+			return nil, errors.New("Unable to locate a UEFI firmware")
 		}
 
 		qemuArgs = append(qemuArgs, "-drive", fmt.Sprintf("if=pflash,format=raw,readonly=on,file=%s", qemuEscapeCmdline(efiPath)))
@@ -9393,7 +9379,7 @@ func (d *qemu) getAgentMetrics() (*metrics.MetricSet, error) {
 	agent, err := incus.ConnectIncusHTTP(agentArgs, client)
 	if err != nil {
 		d.logger.Error("Failed to connect to the agent", logger.Ctx{"project": d.Project().Name, "instance": d.Name(), "err": err})
-		return nil, fmt.Errorf("Failed to connect to the agent")
+		return nil, errors.New("Failed to connect to the agent")
 	}
 
 	defer agent.Disconnect()
@@ -9565,16 +9551,16 @@ func (d *qemu) setCPUs(monitor *qmp.Monitor, count int) error {
 	if count > totalReservedCPUs {
 		// Cannot allocate more CPUs than the system provides.
 		if count > len(cpus) {
-			return fmt.Errorf("Cannot allocate more CPUs than available")
+			return errors.New("Cannot allocate more CPUs than available")
 		}
 
 		// This shouldn't trigger, but if it does, don't panic.
 		if count-totalReservedCPUs > len(availableCPUs) {
-			return fmt.Errorf("Unable to allocate more CPUs, not enough hotpluggable CPUs available")
+			return errors.New("Unable to allocate more CPUs, not enough hotpluggable CPUs available")
 		}
 
 		// Only allocate the difference in CPUs.
-		for i := 0; i < count-totalReservedCPUs; i++ {
+		for i := range count - totalReservedCPUs {
 			cpu := availableCPUs[i]
 
 			devID := fmt.Sprintf("cpu%d%d%d", cpu.Props.SocketID, cpu.Props.CoreID, cpu.Props.ThreadID)
@@ -9604,11 +9590,11 @@ func (d *qemu) setCPUs(monitor *qmp.Monitor, count int) error {
 	} else {
 		if totalReservedCPUs-count > len(hotpluggedCPUs) {
 			// This shouldn't trigger, but if it does, don't panic.
-			return fmt.Errorf("Unable to remove CPUs, not enough hotpluggable CPUs available")
+			return errors.New("Unable to remove CPUs, not enough hotpluggable CPUs available")
 		}
 
 		// Less CPUs requested.
-		for i := 0; i < totalReservedCPUs-count; i++ {
+		for i := range totalReservedCPUs - count {
 			cpu := hotpluggedCPUs[i]
 
 			fields := strings.Split(cpu.QOMPath, "/")
@@ -9836,7 +9822,7 @@ func (d *qemu) consoleSwapSocketWithRB() error {
 // ConsoleScreenshot returns a screenshot of the current VGA console in PNG format.
 func (d *qemu) ConsoleScreenshot(screenshotFile *os.File) error {
 	if !d.IsRunning() {
-		return fmt.Errorf("Instance is not running")
+		return errors.New("Instance is not running")
 	}
 
 	// Check if the agent is running.
@@ -9872,7 +9858,7 @@ func (d *qemu) ReloadDevice(devName string) error {
 // DumpGuestMemory dumps the guest memory to a file in the specified format.
 func (d *qemu) DumpGuestMemory(w *os.File, format string) error {
 	if !d.IsRunning() {
-		return fmt.Errorf("Instance is not running")
+		return errors.New("Instance is not running")
 	}
 
 	// Check if the agent is running.

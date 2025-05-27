@@ -344,8 +344,9 @@ func ovnAddReferencedACLs(info *api.NetworkACL, referencedACLNames map[string]st
 func replaceAddressSetNames(subject string, addressSetIDs map[string]int) string {
 	subjects := util.SplitNTrimSpace(subject, ",", -1, true)
 	for i, subj := range subjects {
-		if strings.HasPrefix(subj, "$") {
-			setID, found := addressSetIDs[strings.TrimPrefix(subj, "$")]
+		after, ok := strings.CutPrefix(subj, "$")
+		if ok {
+			setID, found := addressSetIDs[after]
 			if found {
 				subjects[i] = fmt.Sprintf("$incus_set%d", setID)
 			}
@@ -667,37 +668,40 @@ func ovnRuleSubjectToOVNACLMatch(s *state.State, direction string, aclNameIDs ma
 					fieldParts = append(fieldParts, fmt.Sprintf("ip6.%s == %s_ip6 || ip4.%s == %s_ip4", direction, subjectCriterion, direction, subjectCriterion))
 
 					continue
-				} else if strings.HasPrefix(subjectCriterion, "@") {
-					// Subject is a network peer name. Convert to address set criteria.
-					peerParts := strings.SplitN(strings.TrimPrefix(subjectCriterion, "@"), "/", 2)
-					if len(peerParts) != 2 {
-						return "", false, nil, fmt.Errorf("Cannot parse subject as peer %q", subjectCriterion)
-					}
-
-					peer := db.NetworkPeer{
-						NetworkName: peerParts[0],
-						PeerName:    peerParts[1],
-					}
-
-					networkID, found := peerTargetNetIDs[peer]
-					if !found {
-						return "", false, nil, fmt.Errorf("Cannot find network ID for peer %q", subjectCriterion)
-					}
-
-					addrSetPrefix := OVNIntSwitchPortGroupAddressSetPrefix(networkID)
-
-					fieldParts = append(fieldParts, fmt.Sprintf("ip6.%s == $%s_ip6 || ip4.%s == $%s_ip4", direction, addrSetPrefix, direction, addrSetPrefix))
-					networkPeersNeeded = append(networkPeersNeeded, peer)
-
-					continue // Not a port based selector.
 				} else {
-					// Assume the bare name is an ACL name and convert to port group.
-					aclID, found := aclNameIDs[subjectCriterion]
-					if !found {
-						return "", false, nil, fmt.Errorf("Cannot find security ACL ID for %q", subjectCriterion)
-					}
+					after, ok := strings.CutPrefix(subjectCriterion, "@")
+					if ok {
+						// Subject is a network peer name. Convert to address set criteria.
+						peerParts := strings.SplitN(after, "/", 2)
+						if len(peerParts) != 2 {
+							return "", false, nil, fmt.Errorf("Cannot parse subject as peer %q", subjectCriterion)
+						}
 
-					subjectPortSelector = OVNACLPortGroupName(aclID)
+						peer := db.NetworkPeer{
+							NetworkName: peerParts[0],
+							PeerName:    peerParts[1],
+						}
+
+						networkID, found := peerTargetNetIDs[peer]
+						if !found {
+							return "", false, nil, fmt.Errorf("Cannot find network ID for peer %q", subjectCriterion)
+						}
+
+						addrSetPrefix := OVNIntSwitchPortGroupAddressSetPrefix(networkID)
+
+						fieldParts = append(fieldParts, fmt.Sprintf("ip6.%s == $%s_ip6 || ip4.%s == $%s_ip4", direction, addrSetPrefix, direction, addrSetPrefix))
+						networkPeersNeeded = append(networkPeersNeeded, peer)
+
+						continue // Not a port based selector.
+					} else {
+						// Assume the bare name is an ACL name and convert to port group.
+						aclID, found := aclNameIDs[subjectCriterion]
+						if !found {
+							return "", false, nil, fmt.Errorf("Cannot find security ACL ID for %q", subjectCriterion)
+						}
+
+						subjectPortSelector = OVNACLPortGroupName(aclID)
+					}
 				}
 
 				portType := "inport"
@@ -916,7 +920,7 @@ func OVNPortGroupDeleteIfUnused(s *state.State, l logger.Logger, client *ovn.NB,
 			ignoreInst, isIgnoreInst := ignoreUsageType.(instance.Instance)
 
 			if isIgnoreInst && ignoreUsageNicName == "" {
-				return fmt.Errorf("ignoreUsageNicName should be specified when providing an instance in ignoreUsageType")
+				return errors.New("ignoreUsageNicName should be specified when providing an instance in ignoreUsageType")
 			}
 
 			// If an ignore instance was provided, then skip the device that the ACLs were just removed
@@ -944,7 +948,7 @@ func OVNPortGroupDeleteIfUnused(s *state.State, l logger.Logger, client *ovn.NB,
 			ignoreNet, isIgnoreNet := ignoreUsageType.(*api.Network)
 
 			if isIgnoreNet && ignoreUsageNicName != "" {
-				return fmt.Errorf("ignoreUsageNicName should be empty when providing a network in ignoreUsageType")
+				return errors.New("ignoreUsageNicName should be empty when providing a network in ignoreUsageType")
 			}
 
 			// If an ignore network was provided, then skip the network that the ACLs were just removed
@@ -972,7 +976,7 @@ func OVNPortGroupDeleteIfUnused(s *state.State, l logger.Logger, client *ovn.NB,
 			ignoreProfile, isIgnoreProfile := ignoreUsageType.(cluster.Profile)
 
 			if isIgnoreProfile && ignoreUsageNicName == "" {
-				return fmt.Errorf("ignoreUsageNicName should be specified when providing a profile in ignoreUsageType")
+				return errors.New("ignoreUsageNicName should be specified when providing a profile in ignoreUsageType")
 			}
 
 			// If an ignore profile was provided, then skip the device that the ACLs were just removed

@@ -82,7 +82,7 @@ func (s *execWs) metadata() any {
 func (s *execWs) connect(_ *operations.Operation, r *http.Request, w http.ResponseWriter) error {
 	secret := r.FormValue("secret")
 	if secret == "" {
-		return fmt.Errorf("missing secret")
+		return errors.New("missing secret")
 	}
 
 	for fd, fdSecret := range s.fds {
@@ -147,9 +147,9 @@ func (s *execWs) connect(_ *operations.Operation, r *http.Request, w http.Respon
 				s.waitRequiredConnected.Cancel() // All required connections now connected.
 				return nil
 			} else if !found {
-				return fmt.Errorf("Unknown websocket number")
+				return errors.New("Unknown websocket number")
 			} else {
-				return fmt.Errorf("Websocket number already connected")
+				return errors.New("Websocket number already connected")
 			}
 		}
 	}
@@ -180,7 +180,7 @@ func (s *execWs) do(op *operations.Operation) error {
 	case <-s.waitRequiredConnected.Done():
 		break
 	case <-time.After(time.Second * 5):
-		return fmt.Errorf("Timed out waiting for websockets to connect")
+		return errors.New("Timed out waiting for websockets to connect")
 	}
 
 	var err error
@@ -235,7 +235,7 @@ func (s *execWs) do(op *operations.Operation) error {
 			// For VMs we rely on the agent PTY running inside the VM guest.
 			ttys = make([]*os.File, 2)
 			ptys = make([]*os.File, 2)
-			for i := 0; i < len(ttys); i++ {
+			for i := range ttys {
 				ptys[i], ttys[i], err = os.Pipe()
 				if err != nil {
 					return err
@@ -248,7 +248,7 @@ func (s *execWs) do(op *operations.Operation) error {
 	} else {
 		ttys = make([]*os.File, 3)
 		ptys = make([]*os.File, 3)
-		for i := 0; i < len(ttys); i++ {
+		for i := range ttys {
 			ptys[i], ttys[i], err = os.Pipe()
 			if err != nil {
 				return err
@@ -445,7 +445,7 @@ func (s *execWs) do(op *operations.Operation) error {
 		}()
 	} else {
 		wgEOF.Add(len(ttys) - 1)
-		for i := 0; i < len(ttys); i++ {
+		for i := range ttys {
 			go func(i int) {
 				var err error
 				l.Debug("Exec mirror websocket started", logger.Ctx{"number": i})
@@ -555,7 +555,7 @@ func instanceExecPost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	if internalInstance.IsSnapshot(name) {
-		return response.BadRequest(fmt.Errorf("Invalid instance name"))
+		return response.BadRequest(errors.New("Invalid instance name"))
 	}
 
 	post := api.InstanceExecPost{}
@@ -605,11 +605,11 @@ func instanceExecPost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	if !inst.IsRunning() {
-		return response.BadRequest(fmt.Errorf("Instance is not running"))
+		return response.BadRequest(errors.New("Instance is not running"))
 	}
 
 	if inst.IsFrozen() {
-		return response.BadRequest(fmt.Errorf("Instance is frozen"))
+		return response.BadRequest(errors.New("Instance is frozen"))
 	}
 
 	// Process environment.
@@ -619,8 +619,9 @@ func instanceExecPost(d *Daemon, r *http.Request) response.Response {
 
 	// Override any environment variable settings from the instance if not manually specified in post.
 	for k, v := range inst.ExpandedConfig() {
-		if strings.HasPrefix(k, "environment.") {
-			envKey := strings.TrimPrefix(k, "environment.")
+		after, ok := strings.CutPrefix(k, "environment.")
+		if ok {
+			envKey := after
 			_, found := post.Environment[envKey]
 			if !found {
 				post.Environment[envKey] = v

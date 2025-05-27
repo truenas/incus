@@ -25,7 +25,7 @@ func newDb() *cobra.Command {
 		Use:   "db [sub-command]",
 		Short: "Database-related code generation.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("Not implemented")
+			return errors.New("Not implemented")
 		},
 	}
 
@@ -55,7 +55,7 @@ func newDbMapper() *cobra.Command {
 		Use:   "mapper [sub-command]",
 		Short: "Generate code mapping database rows to Go structs.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("Not implemented")
+			return errors.New("Not implemented")
 		},
 	}
 
@@ -132,8 +132,9 @@ func generate(pkgs []string, boilerplateFilename string) error {
 				// Lazy matching for prefix, does not consider Go syntax and therefore
 				// lines starting with prefix, that are part of e.g. multiline strings
 				// match as well. This is highly unlikely to cause false positives.
-				if strings.HasPrefix(line, prefix) {
-					line = strings.TrimPrefix(line, prefix)
+				after, ok := strings.CutPrefix(line, prefix)
+				if ok {
+					line = after
 
 					// Use csv parser to properly handle arguments surrounded by double quotes.
 					r := csv.NewReader(strings.NewReader(line))
@@ -144,7 +145,7 @@ func generate(pkgs []string, boilerplateFilename string) error {
 					}
 
 					if len(args) == 0 {
-						return fmt.Errorf("command missing")
+						return errors.New("command missing")
 					}
 
 					command := args[0]
@@ -221,7 +222,7 @@ func commandStmt(commandLine []string, target string, parsedPkgs []*packages.Pac
 	}
 
 	if len(flags.Args()) < 1 {
-		return fmt.Errorf("argument <kind> missing for stmt command")
+		return errors.New("argument <kind> missing for stmt command")
 	}
 
 	kind := flags.Arg(0)
@@ -251,7 +252,7 @@ func commandMethod(commandLine []string, target string, parsedPkgs []*packages.P
 	}
 
 	if len(flags.Args()) < 1 {
-		return fmt.Errorf("argument <kind> missing for method command")
+		return errors.New("argument <kind> missing for method command")
 	}
 
 	kind := flags.Arg(0)

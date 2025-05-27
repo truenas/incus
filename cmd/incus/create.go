@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path"
@@ -173,13 +174,13 @@ func (c *cmdCreate) create(conf *config.Config, args []string, launch bool) (inc
 	if !c.global.flagQuiet {
 		if d.HasExtension("instance_create_start") && launch {
 			if name == "" {
-				fmt.Printf(i18n.G("Launching the instance") + "\n")
+				fmt.Print(i18n.G("Launching the instance") + "\n")
 			} else {
 				fmt.Printf(i18n.G("Launching %s")+"\n", name)
 			}
 		} else {
 			if name == "" {
-				fmt.Printf(i18n.G("Creating the instance") + "\n")
+				fmt.Print(i18n.G("Creating the instance") + "\n")
 			} else {
 				fmt.Printf(i18n.G("Creating %s")+"\n", name)
 			}
@@ -339,9 +340,7 @@ func (c *cmdCreate) create(conf *config.Config, args []string, launch bool) (inc
 				return nil, "", fmt.Errorf(i18n.G("Failed loading profile %q for device override: %w"), profileName, err)
 			}
 
-			for k, v := range profile.Devices {
-				profileDevices[k] = v
-			}
+			maps.Copy(profileDevices, profile.Devices)
 		}
 	}
 
@@ -350,9 +349,7 @@ func (c *cmdCreate) create(conf *config.Config, args []string, launch bool) (inc
 		_, isLocalDevice := devicesMap[deviceName]
 		if isLocalDevice {
 			// Apply overrides to local device.
-			for k, v := range deviceOverrides[deviceName] {
-				devicesMap[deviceName][k] = v
-			}
+			maps.Copy(devicesMap[deviceName], deviceOverrides[deviceName])
 		} else {
 			// Check device exists in expanded profile devices.
 			profileDeviceConfig, found := profileDevices[deviceName]
@@ -360,9 +357,7 @@ func (c *cmdCreate) create(conf *config.Config, args []string, launch bool) (inc
 				return nil, "", fmt.Errorf(i18n.G("Cannot override config for device %q: Device not found in profile devices"), deviceName)
 			}
 
-			for k, v := range deviceOverrides[deviceName] {
-				profileDeviceConfig[k] = v
-			}
+			maps.Copy(profileDeviceConfig, deviceOverrides[deviceName])
 
 			// Add device to local devices.
 			devicesMap[deviceName] = profileDeviceConfig
@@ -476,7 +471,7 @@ func (c *cmdCreate) checkNetwork(d incus.InstanceServer, name string) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\n"+i18n.G("The instance you are starting doesn't have any network attached to it.")+"\n")
-	fmt.Fprintf(os.Stderr, "  "+i18n.G("To create a new network, use: incus network create")+"\n")
-	fmt.Fprintf(os.Stderr, "  "+i18n.G("To attach a network to an instance, use: incus network attach")+"\n\n")
+	fmt.Fprint(os.Stderr, "\n"+i18n.G("The instance you are starting doesn't have any network attached to it.")+"\n")
+	fmt.Fprint(os.Stderr, "  "+i18n.G("To create a new network, use: incus network create")+"\n")
+	fmt.Fprint(os.Stderr, "  "+i18n.G("To attach a network to an instance, use: incus network attach")+"\n\n")
 }

@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -68,7 +69,7 @@ func (s *Server) SetLocalLocation(location string) {
 // AddListener creates and returns a new event listener.
 func (s *Server) AddListener(projectName string, allProjects bool, projectPermissionFunc auth.PermissionChecker, connection EventListenerConnection, messageTypes []string, excludeSources []EventSource, recvFunc EventHandler, excludeLocations []string) (*Listener, error) {
 	if allProjects && projectName != "" {
-		return nil, fmt.Errorf("Cannot specify project name when listening for events on all projects")
+		return nil, errors.New("Cannot specify project name when listening for events on all projects")
 	}
 
 	if projectPermissionFunc == nil {
@@ -157,13 +158,7 @@ func (s *Server) Inject(event api.Event, eventSource EventSource) {
 
 func (s *Server) broadcast(event api.Event, eventSource EventSource) error {
 	sourceInSlice := func(source EventSource, sources []EventSource) bool {
-		for _, i := range sources {
-			if source == i {
-				return true
-			}
-		}
-
-		return false
+		return slices.Contains(sources, source)
 	}
 
 	s.lock.Lock()

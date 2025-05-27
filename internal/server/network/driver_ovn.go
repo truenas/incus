@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
@@ -677,7 +678,7 @@ func (n *ovn) Validate(config map[string]string) error {
 	if ipv6Net != nil {
 		ones, _ := ipv6Net.Mask.Size()
 		if ones > 64 {
-			return fmt.Errorf("IPv6 subnet must be at least a /64")
+			return errors.New("IPv6 subnet must be at least a /64")
 		}
 	}
 
@@ -749,7 +750,7 @@ func (n *ovn) Validate(config map[string]string) error {
 	// Check that ipv6.l3only mode is used with ipvp.dhcp.stateful.
 	// As otherwise the router advertisements will configure an address using the subnet's mask.
 	if util.IsTrue(config["ipv6.l3only"]) && util.IsTrueOrEmpty(config["ipv6.dhcp"]) && util.IsFalseOrEmpty(config["ipv6.dhcp.stateful"]) {
-		return fmt.Errorf("The ipv6.dhcp.stateful setting must be enabled when using ipv6.l3only mode with ipv6.dhcp enabled")
+		return errors.New("The ipv6.dhcp.stateful setting must be enabled when using ipv6.l3only mode with ipv6.dhcp enabled")
 	}
 
 	// All tests below are related to the uplink network, skip if we don't have one.
@@ -1228,7 +1229,7 @@ func (n *ovn) setupUplinkPort(routerMAC net.HardwareAddr) (*ovnUplinkVars, error
 func (n *ovn) setupUplinkPortBridge(uplinkNet Network, routerMAC net.HardwareAddr) (*ovnUplinkVars, error) {
 	bridgeNet, ok := uplinkNet.(*bridge)
 	if !ok {
-		return nil, fmt.Errorf("Network is not bridge type")
+		return nil, errors.New("Network is not bridge type")
 	}
 
 	err := bridgeNet.checkClusterWideMACSafe(bridgeNet.config)
@@ -1299,7 +1300,7 @@ func (n *ovn) allocateUplinkPortIPs(uplinkNet Network, routerMAC net.HardwareAdd
 		for _, ns := range nsList {
 			nsIP := net.ParseIP(ns)
 			if nsIP == nil {
-				return nil, fmt.Errorf("Invalid uplink nameserver")
+				return nil, errors.New("Invalid uplink nameserver")
 			}
 
 			if nsIP.To4() == nil {
@@ -1316,7 +1317,7 @@ func (n *ovn) allocateUplinkPortIPs(uplinkNet Network, routerMAC net.HardwareAdd
 
 	// Check if uplink is viable at all.
 	if uplinkIPv4Net == nil && uplinkIPv6Net == nil {
-		return nil, fmt.Errorf("Uplink network doesn't have IPv4 or IPv6 configured")
+		return nil, errors.New("Uplink network doesn't have IPv4 or IPv6 configured")
 	}
 
 	// Decide whether we need to allocate new IP(s) and go to the expense of retrieving all allocated IPs.
@@ -1329,7 +1330,7 @@ func (n *ovn) allocateUplinkPortIPs(uplinkNet Network, routerMAC net.HardwareAdd
 
 			if uplinkIPv4Net != nil && routerExtPortIPv4 == nil {
 				if uplinkNetConf["ipv4.ovn.ranges"] == "" {
-					return fmt.Errorf(`Missing required "ipv4.ovn.ranges" config key on uplink network`)
+					return errors.New(`Missing required "ipv4.ovn.ranges" config key on uplink network`)
 				}
 
 				dhcpSubnet := uplinkNet.DHCPv4Subnet()
@@ -1486,11 +1487,8 @@ func (n *ovn) uplinkAllocateIP(ipRanges []*iprange.Range, allAllocated []net.IP)
 
 			// Check IP is not already allocated.
 			freeIP := true
-			for _, allocatedIP := range allAllocated {
-				if ip.Equal(allocatedIP) {
-					freeIP = false
-					break
-				}
+			if slices.ContainsFunc(allAllocated, ip.Equal) {
+				freeIP = false
 			}
 
 			if !freeIP {
@@ -1502,7 +1500,7 @@ func (n *ovn) uplinkAllocateIP(ipRanges []*iprange.Range, allAllocated []net.IP)
 		}
 	}
 
-	return nil, fmt.Errorf("No free IPs available")
+	return nil, errors.New("No free IPs available")
 }
 
 // startUplinkPort performs any network start up logic needed to connect the uplink connection to OVN.
@@ -1734,7 +1732,7 @@ func (n *ovn) pingOVNRouter() {
 			var err error
 
 			// Try several attempts as it can take a few seconds for the network to come up.
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				err = pingIP(context.TODO(), ip)
 				if err == nil {
 					n.logger.Debug("OVN router external IP address reachable", logger.Ctx{"ip": ip.String()})
@@ -2203,13 +2201,13 @@ func (n *ovn) validateUplinkNetwork(p *api.Project, uplinkNetworkName string) (s
 
 	allowedNetworkCount := len(allowedUplinkNetworks)
 	if allowedNetworkCount == 0 {
-		return "", fmt.Errorf(`No allowed uplink networks in project`)
+		return "", errors.New(`No allowed uplink networks in project`)
 	} else if allowedNetworkCount == 1 {
 		// If there is only one allowed uplink network then use it if not specified by user.
 		return allowedUplinkNetworks[0], nil
 	}
 
-	return "", fmt.Errorf(`Option "network" is required`)
+	return "", errors.New(`Option "network" is required`)
 }
 
 // getDHCPv4Reservations returns list DHCP IPv4 reservations from NICs connected to this network.
@@ -2354,9 +2352,7 @@ func (n *ovn) setup(update bool) error {
 
 	// Apply any config dynamically generated to the current config and store back to DB in single transaction.
 	if len(updatedConfig) > 0 {
-		for k, v := range updatedConfig {
-			n.config[k] = v
-		}
+		maps.Copy(n.config, updatedConfig)
 
 		err := n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 			err = tx.UpdateNetwork(ctx, n.project, n.name, n.description, n.config)
@@ -2409,7 +2405,7 @@ func (n *ovn) setup(update bool) error {
 	}
 
 	if n.config["network"] != "none" && routerIntPortIPv4 == nil && routerIntPortIPv6 == nil {
-		return fmt.Errorf("IPv4 or IPv6 subnets must be specified on a non-isolated OVN network")
+		return errors.New("IPv4 or IPv6 subnets must be specified on a non-isolated OVN network")
 	}
 
 	// Create chassis group.
@@ -2729,7 +2725,7 @@ func (n *ovn) setup(update bool) error {
 			}
 
 			if !unused {
-				return fmt.Errorf("Only unconfigured network interfaces can be bridged")
+				return errors.New("Only unconfigured network interfaces can be bridged")
 			}
 
 			lspName := networkOVN.OVNSwitchPort(fmt.Sprintf("%s-external-n%d-%s", n.getNetworkPrefix(), n.state.DB.Cluster.GetNodeID(), entry))
@@ -3412,13 +3408,7 @@ func (n *ovn) chassisEnabled(ctx context.Context, tx *db.ClusterTx) (bool, error
 	enableChassis := -1
 
 	for _, member := range members {
-		hasRole := false
-		for _, role := range member.Roles {
-			if role == db.ClusterRoleOVNChassis {
-				hasRole = true
-				break
-			}
-		}
+		hasRole := slices.Contains(member.Roles, db.ClusterRoleOVNChassis)
 
 		if hasRole {
 			if member.ID == memberID {
@@ -4231,7 +4221,7 @@ func (n *ovn) hasDHCPv4Reservation(dhcpReservations []iprange.Range, ip net.IP) 
 // Returns the logical switch port name and a list of IPs that were allocated to the port for DNS.
 func (n *ovn) InstanceDevicePortStart(opts *OVNInstanceNICSetupOpts, securityACLsRemove []string) (networkOVN.OVNSwitchPort, []net.IP, error) {
 	if opts.InstanceUUID == "" {
-		return "", nil, fmt.Errorf("Instance UUID is required")
+		return "", nil, errors.New("Instance UUID is required")
 	}
 
 	mac, err := net.ParseMAC(opts.DeviceConfig["hwaddr"])
@@ -4397,12 +4387,73 @@ func (n *ovn) InstanceDevicePortStart(opts *OVNInstanceNICSetupOpts, securityACL
 		checkAndStoreIP(net.ParseIP(staticIP))
 	}
 
+	// Apply device specific external address if any.
+	for _, keyPrefix := range []string{"ipv4", "ipv6"} {
+		// Check if the address is present.
+		value := opts.DeviceConfig[fmt.Sprintf("%s.address.external", keyPrefix)]
+		if value == "" {
+			continue
+		}
+
+		// Check if the family is configured.
+		if keyPrefix == "ipv4" && ipv4 == "" {
+			continue
+		}
+
+		if keyPrefix == "ipv6" && ipv6 == "" {
+			continue
+		}
+
+		// Parse the internal address.
+		var intNet *net.IPNet
+		if keyPrefix == "ipv4" {
+			_, intNet, err = net.ParseCIDR(fmt.Sprintf("%s/32", ipv4))
+			if err != nil {
+				return "", nil, fmt.Errorf("Invalid internal address %q: %w", ipv4, err)
+			}
+		} else {
+			_, intNet, err = net.ParseCIDR(fmt.Sprintf("%s/128", ipv6))
+			if err != nil {
+				return "", nil, fmt.Errorf("Invalid internal address %q: %w", ipv6, err)
+			}
+		}
+
+		// Parse the external address.
+		extIP := net.ParseIP(value)
+		if extIP == nil {
+			return "", nil, fmt.Errorf("Invalid external address %q", value)
+		}
+
+		if err := n.ovnnb.CreateLogicalRouterNAT(
+			context.TODO(),
+			n.getRouterName(),
+			"snat",
+			intNet,
+			extIP,
+			nil,
+			false,
+			true,
+		); err != nil {
+			return "", nil, fmt.Errorf("Failed to add SNAT %q: %w", value, err)
+		}
+
+		reverter.Add(func() {
+			_ = n.ovnnb.DeleteLogicalRouterNAT(
+				context.TODO(),
+				n.getRouterName(),
+				"snat",
+				false,
+				extIP,
+			)
+		})
+	}
+
 	// Get dynamic IPs for switch port if any IPs not assigned statically.
 	if (ipv4 != "none" && dnsIPv4 == nil) || (ipv6 != "none" && dnsIPv6 == nil) {
 		var dynamicIPs []net.IP
 
 		// Retry a few times in case port has not yet allocated dynamic IPs.
-		for i := 0; i < 40; i++ {
+		for range 40 {
 			dynamicIPs, err = n.ovnnb.GetLogicalSwitchPortDynamicIPs(context.TODO(), instancePortName)
 			if err == nil {
 				if len(dynamicIPs) > 0 {
@@ -4422,7 +4473,7 @@ func (n *ovn) InstanceDevicePortStart(opts *OVNInstanceNICSetupOpts, securityACL
 
 		// Check, after considering all dynamic IPs, whether we have got the required ones.
 		if (dnsIPv4 == nil && dhcpv4Subnet != nil) || (dnsIPv6 == nil && dhcpv6Subnet != nil) {
-			return "", nil, fmt.Errorf("Insufficient dynamic addresses allocated")
+			return "", nil, errors.New("Insufficient dynamic addresses allocated")
 		}
 	}
 
@@ -4785,7 +4836,7 @@ func (n *ovn) instanceDeviceACLDefaults(deviceConfig deviceConfig.Device, direct
 // InstanceDevicePortIPs returns the allocated IPs for a device port.
 func (n *ovn) InstanceDevicePortIPs(instanceUUID string, deviceName string) ([]net.IP, error) {
 	if instanceUUID == "" {
-		return nil, fmt.Errorf("Instance UUID is required")
+		return nil, errors.New("Instance UUID is required")
 	}
 
 	instancePortName := n.getInstanceDevicePortName(instanceUUID, deviceName)
@@ -4805,7 +4856,7 @@ func (n *ovn) InstanceDevicePortStop(ovsExternalOVNPort networkOVN.OVNSwitchPort
 	source := "OVS"
 	if ovsExternalOVNPort == "" {
 		if opts.InstanceUUID == "" {
-			return fmt.Errorf("Instance UUID is required")
+			return errors.New("Instance UUID is required")
 		}
 
 		instancePortName = n.getInstanceDevicePortName(opts.InstanceUUID, opts.DeviceName)
@@ -4922,6 +4973,27 @@ func (n *ovn) InstanceDevicePortStop(ovsExternalOVNPort networkOVN.OVNSwitchPort
 	if len(removeNATIPs) > 0 {
 		err = n.ovnnb.DeleteLogicalRouterNAT(context.TODO(), n.getRouterName(), "dnat_and_snat", false, removeNATIPs...)
 		if err != nil {
+			return err
+		}
+	}
+
+	// Tear down per‑NIC egress SNAT rules (ipv4/ipv6.address.external)
+	for _, keyPrefix := range []string{"ipv4", "ipv6"} {
+		// Check if the address is present.
+		value := opts.DeviceConfig[fmt.Sprintf("%s.address.external", keyPrefix)]
+		if value == "" {
+			continue
+		}
+
+		// Validate the address.
+		extIP := net.ParseIP(value)
+		if extIP == nil {
+			return fmt.Errorf("Invalid external address %q", value)
+		}
+
+		// Remove the SNAT entry.
+		err := n.ovnnb.DeleteLogicalRouterNAT(context.TODO(), n.getRouterName(), "snat", false, extIP)
+		if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
 			return err
 		}
 	}
@@ -5310,7 +5382,7 @@ func (n *ovn) forwardFlattenVIPs(listenAddress net.IP, defaultTargetAddress net.
 // ForwardCreate creates a network forward.
 func (n *ovn) ForwardCreate(forward api.NetworkForwardsPost, clientType request.ClientType) error {
 	if n.config["network"] == "none" {
-		return fmt.Errorf("Isolated OVN network cannot use network forwards")
+		return errors.New("Isolated OVN network cannot use network forwards")
 	}
 
 	reverter := revert.New()
@@ -5684,7 +5756,7 @@ func (n *ovn) loadBalancerFlattenVIPs(listenAddress net.IP, portMaps []*loadBala
 // LoadBalancerCreate creates a network load balancer.
 func (n *ovn) LoadBalancerCreate(loadBalancer api.NetworkLoadBalancersPost, clientType request.ClientType) error {
 	if n.config["network"] == "none" {
-		return fmt.Errorf("Isolated OVN network cannot use network load balancers")
+		return errors.New("Isolated OVN network cannot use network load balancers")
 	}
 
 	reverter := revert.New()
@@ -6007,7 +6079,7 @@ func (n *ovn) LoadBalancerState(lb api.NetworkLoadBalancer) (*api.NetworkLoadBal
 						return nil, fmt.Errorf("Invalid listen port in port specification %q: %w", lbPort.ListenPort, err)
 					}
 
-					for i := int64(0); i < portRange; i++ {
+					for i := range portRange {
 						port := portFirst + i
 
 						status, err := n.ovnsb.GetServiceHealth(context.TODO(), backend.TargetAddress, lbPort.Protocol, int(port))
@@ -6282,7 +6354,7 @@ func (n *ovn) localPeerCreate(peer api.NetworkPeersPost) error {
 
 	targetOVNNet, ok := targetNet.(*ovn)
 	if !ok {
-		return fmt.Errorf("Target network is not ovn interface type")
+		return errors.New("Target network is not ovn interface type")
 	}
 
 	opts, err := n.peerGetLocalOpts(localNICRoutes)
@@ -6374,7 +6446,7 @@ func (n *ovn) remotePeerCreate(peer api.NetworkPeersPost) error {
 	}
 
 	if len(gateways) == 0 {
-		return fmt.Errorf("No chassis gateways available for interconnect")
+		return errors.New("No chassis gateways available for interconnect")
 	}
 
 	// Determine the transit switch name.
@@ -6429,7 +6501,7 @@ func (n *ovn) remotePeerCreate(peer api.NetworkPeersPost) error {
 
 	// Check that the switch appeared on the local OVN.
 	found := false
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		// Try to get the switch.
 		logicalSwitch, err := n.ovnnb.GetLogicalSwitch(ctx, tsName)
 		if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
@@ -6445,7 +6517,7 @@ func (n *ovn) remotePeerCreate(peer api.NetworkPeersPost) error {
 	}
 
 	if !found {
-		return fmt.Errorf("New transit switch didn't appear within 10s")
+		return errors.New("New transit switch didn't appear within 10s")
 	}
 
 	// Get router MAC address.
@@ -6780,7 +6852,7 @@ func (n *ovn) localPeerDelete(peer *api.NetworkPeer) error {
 
 	targetOVNNet, ok := targetNet.(*ovn)
 	if !ok {
-		return fmt.Errorf("Target network is not ovn interface type")
+		return errors.New("Target network is not ovn interface type")
 	}
 
 	opts := networkOVN.OVNRouterPeering{
@@ -6932,7 +7004,7 @@ func (n *ovn) PeerDelete(peerName string) error {
 	}
 
 	if isUsed {
-		return fmt.Errorf("Cannot delete a Peer that is in use")
+		return errors.New("Cannot delete a Peer that is in use")
 	}
 
 	if peer.Status == api.NetworkStatusCreated {
@@ -6990,7 +7062,7 @@ func (n *ovn) forPeers(f func(targetOVNNet *ovn) error) error {
 
 		targetOVNNet, ok := targetNet.(*ovn)
 		if !ok {
-			return fmt.Errorf("Target network is not ovn interface type")
+			return errors.New("Target network is not ovn interface type")
 		}
 
 		err = f(targetOVNNet)

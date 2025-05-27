@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"math"
 	"math/rand"
 	"mime"
@@ -209,26 +210,26 @@ func imgPostInstanceInfo(ctx context.Context, s *state.State, r *http.Request, r
 	imageType := req.Format
 
 	if ctype == "" || name == "" {
-		return nil, fmt.Errorf("No source provided")
+		return nil, errors.New("No source provided")
 	}
 
 	if imageType != "" && imageType != "unified" && imageType != "split" {
-		return nil, fmt.Errorf("Invalid image format")
+		return nil, errors.New("Invalid image format")
 	}
 
 	switch ctype {
 	case "snapshot":
 		if !internalInstance.IsSnapshot(name) {
-			return nil, fmt.Errorf("Not a snapshot")
+			return nil, errors.New("Not a snapshot")
 		}
 
 	case "container", "virtual-machine", "instance":
 		if internalInstance.IsSnapshot(name) {
-			return nil, fmt.Errorf("This is a snapshot")
+			return nil, errors.New("This is a snapshot")
 		}
 
 	default:
-		return nil, fmt.Errorf("Bad type")
+		return nil, errors.New("Bad type")
 	}
 
 	info.Filename = req.Filename
@@ -528,7 +529,7 @@ func imgPostRemoteInfo(ctx context.Context, s *state.State, r *http.Request, req
 	} else if req.Source.Alias != "" {
 		hash = req.Source.Alias
 	} else {
-		return nil, fmt.Errorf("must specify one of alias or fingerprint for init from image")
+		return nil, errors.New("must specify one of alias or fingerprint for init from image")
 	}
 
 	info, _, err := ImageDownload(ctx, r, s, op, &ImageDownloadArgs{
@@ -562,9 +563,7 @@ func imgPostRemoteInfo(ctx context.Context, s *state.State, r *http.Request, req
 		}
 
 		// Allow overriding or adding properties
-		for k, v := range req.Properties {
-			info.Properties[k] = v
-		}
+		maps.Copy(info.Properties, req.Properties)
 
 		// Get profile IDs
 		if req.Profiles == nil {
@@ -605,7 +604,7 @@ func imgPostURLInfo(ctx context.Context, s *state.State, r *http.Request, req ap
 	var err error
 
 	if req.Source.URL == "" {
-		return nil, fmt.Errorf("Missing URL")
+		return nil, errors.New("Missing URL")
 	}
 
 	myhttp, err := localUtil.HTTPClient("", s.Proxy)
@@ -640,12 +639,12 @@ func imgPostURLInfo(ctx context.Context, s *state.State, r *http.Request, req ap
 
 	hash := raw.Header.Get("Incus-Image-Hash")
 	if hash == "" {
-		return nil, fmt.Errorf("Missing Incus-Image-Hash header")
+		return nil, errors.New("Missing Incus-Image-Hash header")
 	}
 
 	url := raw.Header.Get("Incus-Image-URL")
 	if url == "" {
-		return nil, fmt.Errorf("Missing Incus-Image-URL header")
+		return nil, errors.New("Missing Incus-Image-URL header")
 	}
 
 	// Import the image
@@ -671,9 +670,7 @@ func imgPostURLInfo(ctx context.Context, s *state.State, r *http.Request, req ap
 		}
 
 		// Allow overriding or adding properties
-		for k, v := range req.Properties {
-			info.Properties[k] = v
-		}
+		maps.Copy(info.Properties, req.Properties)
 
 		if req.Public || req.AutoUpdate || req.Filename != "" || len(req.Properties) > 0 {
 			err := tx.UpdateImage(ctx, id, req.Filename, info.Size, req.Public, req.AutoUpdate, info.Architecture, info.CreatedAt, info.ExpiresAt, info.Properties, "", nil)
@@ -732,7 +729,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 		}
 
 		if part.FormName() != "metadata" {
-			return nil, fmt.Errorf("Invalid multipart image")
+			return nil, errors.New("Invalid multipart image")
 		}
 
 		size, err = io.Copy(io.MultiWriter(imageTarf, hash256), part)
@@ -757,7 +754,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 			info.Type = instancetype.VM.String()
 		} else {
 			l.Error("Invalid multipart image")
-			return nil, fmt.Errorf("Invalid multipart image")
+			return nil, errors.New("Invalid multipart image")
 		}
 
 		// Create a temporary file for the rootfs tarball
@@ -948,7 +945,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 				return nil, err
 			}
 		} else {
-			return &info, fmt.Errorf("Image with same fingerprint already exists")
+			return &info, errors.New("Image with same fingerprint already exists")
 		}
 	} else {
 		public, ok := metadata["public"]
@@ -974,7 +971,7 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
 // database and hence has already a storage volume in at least one storage pool.
 func imageCreateInPool(s *state.State, info *api.Image, storagePool string) error {
 	if storagePool == "" {
-		return fmt.Errorf("No storage pool specified")
+		return errors.New("No storage pool specified")
 	}
 
 	pool, err := storagePools.LoadByName(s, storagePool)
@@ -1216,7 +1213,7 @@ func imagesPost(d *Daemon, r *http.Request) response.Response {
 
 	if !imageUpload && !slices.Contains([]string{"container", "instance", "virtual-machine", "snapshot", "image", "url"}, req.Source.Type) {
 		cleanup(builddir, post)
-		return response.InternalError(fmt.Errorf("Invalid images JSON"))
+		return response.InternalError(errors.New("Invalid images JSON"))
 	}
 
 	/* Forward requests for containers on other nodes */
@@ -1404,7 +1401,7 @@ func getImageMetadata(fname string) (*api.ImageMetadata, string, error) {
 	}
 
 	if unpacker == nil {
-		return nil, "unknown", fmt.Errorf("Unsupported backup compression")
+		return nil, "unknown", errors.New("Unsupported backup compression")
 	}
 
 	// Open the tarball
@@ -1479,7 +1476,7 @@ func getImageMetadata(fname string) (*api.ImageMetadata, string, error) {
 	}
 
 	if !hasMeta {
-		return nil, "unknown", fmt.Errorf("Metadata tarball is missing metadata.yaml")
+		return nil, "unknown", errors.New("Metadata tarball is missing metadata.yaml")
 	}
 
 	_, err = osarch.ArchitectureID(result.Architecture)
@@ -1488,7 +1485,7 @@ func getImageMetadata(fname string) (*api.ImageMetadata, string, error) {
 	}
 
 	if result.CreationDate == 0 {
-		return nil, "unknown", fmt.Errorf("Missing creation date")
+		return nil, "unknown", errors.New("Missing creation date")
 	}
 
 	return &result, imageType, nil
@@ -1795,7 +1792,7 @@ func imagesGet(d *Daemon, r *http.Request) response.Response {
 
 	// ProjectParam returns default if not set
 	if allProjects && projectName != api.ProjectDefaultName {
-		return response.BadRequest(fmt.Errorf("Cannot specify a project when requesting all projects"))
+		return response.BadRequest(errors.New("Cannot specify a project when requesting all projects"))
 	}
 
 	s := d.State()
@@ -2124,11 +2121,8 @@ func distributeImage(ctx context.Context, s *state.State, nodes []string, oldFin
 			// skip distributing the image to this cluster member.
 			// If the option is unset, distribute the image.
 			if vol != "" {
-				for _, imageVolume := range imageVolumes {
-					if imageVolume == vol {
-						skipDistribution = true
-						break
-					}
+				if slices.Contains(imageVolumes, vol) {
+					skipDistribution = true
 				}
 
 				if skipDistribution {
@@ -3467,7 +3461,7 @@ func imageAliasesPost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	if req.Name == "" || req.Target == "" {
-		return response.BadRequest(fmt.Errorf("name and target are required"))
+		return response.BadRequest(errors.New("name and target are required"))
 	}
 
 	err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
@@ -3883,7 +3877,7 @@ func imageAliasPut(d *Daemon, r *http.Request) response.Response {
 	}
 
 	if req.Target == "" {
-		return response.BadRequest(fmt.Errorf("The target field is required"))
+		return response.BadRequest(errors.New("The target field is required"))
 	}
 
 	var imgAlias api.ImageAliasesEntry
@@ -4827,7 +4821,7 @@ func imageSyncBetweenNodes(ctx context.Context, s *state.State, r *http.Request,
 	}
 
 	// Replicate on as many nodes as needed.
-	for i := 0; i < int(nodeCount); i++ {
+	for range int(nodeCount) {
 		var addresses []string
 
 		err = s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
@@ -4880,9 +4874,7 @@ func createTokenResponse(s *state.State, r *http.Request, projectName string, fi
 
 	meta := jmap.Map{}
 
-	for k, v := range metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, metadata)
 
 	meta["secret"] = secret
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
@@ -54,7 +55,7 @@ func (d Nftables) Compat() (bool, error) {
 	// We require a >= 5.2 kernel to avoid weird conflicts with xtables and support for inet table NAT rules.
 	releaseLen := len(uname.Release)
 	if releaseLen > 1 {
-		verErr := fmt.Errorf("Kernel version does not meet minimum requirement of 5.2")
+		verErr := errors.New("Kernel version does not meet minimum requirement of 5.2")
 		releaseParts := strings.SplitN(uname.Release, ".", 3)
 		if len(releaseParts) < 2 {
 			return false, fmt.Errorf("Failed parsing kernel version number into parts: %w", err)
@@ -507,22 +508,22 @@ func (d Nftables) InstanceClearBridgeFilter(projectName string, instanceName str
 // InstanceSetupProxyNAT creates DNAT rules for proxy devices.
 func (d Nftables) InstanceSetupProxyNAT(projectName string, instanceName string, deviceName string, forward *AddressForward) error {
 	if forward.ListenAddress == nil {
-		return fmt.Errorf("Listen address is required")
+		return errors.New("Listen address is required")
 	}
 
 	if forward.TargetAddress == nil {
-		return fmt.Errorf("Target address is required")
+		return errors.New("Target address is required")
 	}
 
 	listenPortsLen := len(forward.ListenPorts)
 	if listenPortsLen <= 0 {
-		return fmt.Errorf("At least 1 listen port must be supplied")
+		return errors.New("At least 1 listen port must be supplied")
 	}
 
 	// If multiple target ports supplied, check they match the listen port(s) count.
 	targetPortsLen := len(forward.TargetPorts)
 	if targetPortsLen != 1 && targetPortsLen != listenPortsLen {
-		return fmt.Errorf("Mismatch between listen port(s) and target port(s) count")
+		return errors.New("Mismatch between listen port(s) and target port(s) count")
 	}
 
 	ipFamily := "ip"
@@ -690,7 +691,7 @@ func (d Nftables) aclRulesToNftRules(hostName string, aclRules []ACLRule) (*nftR
 			}
 
 			if partial {
-				return nil, fmt.Errorf("Invalid default rule generated")
+				return nil, errors.New("Invalid default rule generated")
 			}
 
 			continue
@@ -779,10 +780,10 @@ func (d Nftables) aclRuleToNftRules(hostNameQuoted string, rule ACLRule) ([]stri
 		}
 
 		if len(nft6Rules) == 0 {
-			return nil, nil, nil, fmt.Errorf("Invalid empty rule generated")
+			return nil, nil, nil, errors.New("Invalid empty rule generated")
 		}
 	} else if len(nft4Rules) == 0 {
-		return nil, nil, nil, fmt.Errorf("Invalid empty rule generated")
+		return nil, nil, nil, errors.New("Invalid empty rule generated")
 	}
 
 	nftRules := []string{}
@@ -1079,7 +1080,7 @@ func (d Nftables) aclRuleCriteriaToRules(networkName string, ipVersion uint, rul
 			for _, frag := range matchFragments {
 				// if fragment contain IP address sets of different family than icmp drop fragment
 				// This is ok for icmp only as we may apply both ipv4 and ipv6 restriction in match field for tcp/udp
-				ruleFragments = append(ruleFragments, append(append([]string{}, baseArgs...), frag))
+				ruleFragments = append(ruleFragments, append(slices.Clone(baseArgs), frag))
 			}
 		}
 	}
@@ -1111,7 +1112,7 @@ func (d Nftables) aclRuleCriteriaToRules(networkName string, ipVersion uint, rul
 
 				for _, frag := range ruleFragments {
 					for _, df := range matchFragments {
-						newRule := append(append([]string{}, frag...), df)
+						newRule := append(slices.Clone(frag), df)
 
 						if !contains(combined, newRule) {
 							combined = append(combined, newRule)
@@ -1123,7 +1124,7 @@ func (d Nftables) aclRuleCriteriaToRules(networkName string, ipVersion uint, rul
 			} else {
 				// If no source criteria were provided, start with baseArgs and add destination fragments.
 				for _, df := range matchFragments {
-					ruleFragments = append(ruleFragments, append(append([]string{}, baseArgs...), df))
+					ruleFragments = append(ruleFragments, append(slices.Clone(baseArgs), df))
 				}
 			}
 		}
@@ -1131,7 +1132,7 @@ func (d Nftables) aclRuleCriteriaToRules(networkName string, ipVersion uint, rul
 
 	// If source and destination are empty we want to build base rules at least
 	if rule.Source == "" && rule.Destination == "" {
-		ruleFragments = append(ruleFragments, append([]string{}, baseArgs...))
+		ruleFragments = append(ruleFragments, slices.Clone(baseArgs))
 	}
 
 	// Build the remaining parts (protocol, ports, logging, action).
@@ -1198,9 +1199,10 @@ func (d Nftables) aclRuleSubjectToACLMatch(direction string, ipVersion uint, sub
 
 	// Process each criterion
 	for _, subjectCriterion := range subjectCriteria {
-		if strings.HasPrefix(subjectCriterion, "$") {
+		after, ok := strings.CutPrefix(subjectCriterion, "$")
+		if ok {
 			// This is an address set reference.
-			setName := strings.TrimPrefix(subjectCriterion, "$")
+			setName := after
 			// With an address we won't guess if it only contains ipv4 or ipv6 address so partial is set
 			partial = true
 			switch ipVersion {

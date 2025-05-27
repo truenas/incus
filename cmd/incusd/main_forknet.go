@@ -213,6 +213,7 @@ import "C"
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -396,7 +397,7 @@ func (c *cmdForknet) dhcpRunV4(errorChannel chan error, iface string, hostname s
 
 	if lease.Offer.YourIPAddr == nil || lease.Offer.YourIPAddr.Equal(net.IPv4zero) || lease.Offer.SubnetMask() == nil || len(lease.Offer.Router()) != 1 {
 		logger.Error("Giving up on DHCPv4, lease didn't contain required fields")
-		errorChannel <- fmt.Errorf("Giving up on DHCPv4, lease didn't contain required fields")
+		errorChannel <- errors.New("Giving up on DHCPv4, lease didn't contain required fields")
 		return
 	}
 
@@ -567,7 +568,7 @@ func (c *cmdForknet) dhcpRunV6(errorChannel chan error, iface string, hostname s
 	ia := reply.Options.OneIANA()
 	if ia == nil {
 		logger.Error("Giving up on DHCPv6 renewal, reply missing IANA")
-		errorChannel <- fmt.Errorf("Giving up on DHCPv6 renewal, reply missing IANA")
+		errorChannel <- errors.New("Giving up on DHCPv6 renewal, reply missing IANA")
 		return
 	}
 
@@ -629,6 +630,12 @@ func (c *cmdForknet) dhcpApplyDNS(logger *logrus.Logger) error {
 	c.applyDNSMu.Lock()
 	defer c.applyDNSMu.Unlock()
 
+	// Skip touching resolv.conf if no leases.
+	if c.dhcpv4Lease == nil && c.dhcpv6Lease == nil {
+		return nil
+	}
+
+	// Create resolv.conf.
 	f, err := os.Create(filepath.Join(c.instNetworkPath, "resolv.conf"))
 	if err != nil {
 		logger.WithError(err).Error("Giving up on DHCP, couldn't create resolv.conf")
@@ -637,6 +644,7 @@ func (c *cmdForknet) dhcpApplyDNS(logger *logrus.Logger) error {
 
 	defer f.Close()
 
+	// IPv4 addresses.
 	if c.dhcpv4Lease != nil {
 		if len(c.dhcpv4Lease.Offer.DNS()) > 0 {
 			for _, nameserver := range c.dhcpv4Lease.Offer.DNS() {
@@ -665,6 +673,7 @@ func (c *cmdForknet) dhcpApplyDNS(logger *logrus.Logger) error {
 		}
 	}
 
+	// IPv6 addresses.
 	if c.dhcpv6Lease != nil {
 		if len(c.dhcpv6Lease.Options.DNS()) > 0 {
 			for _, nameserver := range c.dhcpv6Lease.Options.DNS() {
@@ -694,15 +703,15 @@ func (c *cmdForknet) runDetach(_ *cobra.Command, args []string) error {
 	hostName := args[3]
 
 	if daemonPID == "" {
-		return fmt.Errorf("Daemon PID argument is required")
+		return errors.New("Daemon PID argument is required")
 	}
 
 	if ifName == "" {
-		return fmt.Errorf("ifname argument is required")
+		return errors.New("ifname argument is required")
 	}
 
 	if hostName == "" {
-		return fmt.Errorf("hostname argument is required")
+		return errors.New("hostname argument is required")
 	}
 
 	// Check if the interface exists.

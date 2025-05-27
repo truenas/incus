@@ -2,7 +2,7 @@ package idmap
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"reflect"
 	"slices"
 	"sort"
@@ -11,10 +11,10 @@ import (
 )
 
 // ErrHostIDIsSubID indicates that an expected host ID is part of a subid range.
-var ErrHostIDIsSubID = fmt.Errorf("Host ID is in the range of subids")
+var ErrHostIDIsSubID = errors.New("Host ID is in the range of subids")
 
 // ErrNoSuitableSubmap indicates that it was impossible to split a submap with the requested characteristics.
-var ErrNoSuitableSubmap = fmt.Errorf("Couldn't find a suitable submap")
+var ErrNoSuitableSubmap = errors.New("Couldn't find a suitable submap")
 
 // Set is a list of Entry with some functions on it.
 type Set struct {
@@ -75,24 +75,12 @@ func (m *Set) Less(i, j int) bool {
 
 // Intersects checks if any of the Entry in the set intersects with the provided entry.
 func (m *Set) Intersects(i Entry) bool {
-	for _, e := range m.Entries {
-		if i.Intersects(e) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(m.Entries, i.Intersects)
 }
 
 // HostIDsIntersect checks if any of the Entry hostids in the set intersects with the provided entry.
 func (m *Set) HostIDsIntersect(i Entry) bool {
-	for _, e := range m.Entries {
-		if i.HostIDsIntersect(e) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(m.Entries, i.HostIDsIntersect)
 }
 
 // Usable checks that all Entry in the set are usable.
@@ -260,7 +248,7 @@ func (m *Set) Append(s string) (*Set, error) {
 	}
 
 	if m.Intersects(e) {
-		return m, fmt.Errorf("Conflicting id mapping")
+		return m, errors.New("Conflicting id mapping")
 	}
 
 	m.Entries = append(m.Entries, e)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -313,15 +314,15 @@ func storagePoolsPost(d *Daemon, r *http.Request) response.Response {
 
 	// Quick checks.
 	if req.Name == "" {
-		return response.BadRequest(fmt.Errorf("No name provided"))
+		return response.BadRequest(errors.New("No name provided"))
 	}
 
 	if strings.Contains(req.Name, "/") {
-		return response.BadRequest(fmt.Errorf("Storage pool names may not contain slashes"))
+		return response.BadRequest(errors.New("Storage pool names may not contain slashes"))
 	}
 
 	if req.Driver == "" {
-		return response.BadRequest(fmt.Errorf("No driver provided"))
+		return response.BadRequest(errors.New("No driver provided"))
 	}
 
 	if req.Config == nil {
@@ -496,7 +497,7 @@ func storagePoolsPostCluster(ctx context.Context, s *state.State, pool *api.Stor
 	if pool != nil {
 		// Check pool isn't already created.
 		if pool.Status == api.StoragePoolStatusCreated {
-			return fmt.Errorf("The storage pool is already created")
+			return errors.New("The storage pool is already created")
 		}
 
 		// Check the requested pool type matches the type created when adding the local member config.
@@ -520,7 +521,7 @@ func storagePoolsPostCluster(ctx context.Context, s *state.State, pool *api.Stor
 		// Check if any global config exists already, if so we should not create global config again.
 		if pool != nil && storagePoolPartiallyCreated(pool) {
 			if len(req.Config) > 0 {
-				return fmt.Errorf("Storage pool already partially created. Please do not specify any global config when re-running create")
+				return errors.New("Storage pool already partially created. Please do not specify any global config when re-running create")
 			}
 
 			logger.Debug("Skipping global storage pool create as global config already partially created", logger.Ctx{"pool": req.Name})
@@ -544,7 +545,7 @@ func storagePoolsPostCluster(ctx context.Context, s *state.State, pool *api.Stor
 	})
 	if err != nil {
 		if response.IsNotFoundError(err) {
-			return fmt.Errorf("Pool not pending on any node (use --target <node> first)")
+			return errors.New("Pool not pending on any node (use --target <node> first)")
 		}
 
 		return err
@@ -560,9 +561,7 @@ func storagePoolsPostCluster(ctx context.Context, s *state.State, pool *api.Stor
 	nodeReq := req
 
 	// Merge node specific config items into global config.
-	for key, value := range configs[s.ServerName] {
-		nodeReq.Config[key] = value
-	}
+	maps.Copy(nodeReq.Config, configs[s.ServerName])
 
 	updatedConfig, err := storagePoolCreateLocal(ctx, s, poolID, req, clientType)
 	if err != nil {
@@ -591,9 +590,7 @@ func storagePoolsPostCluster(ctx context.Context, s *state.State, pool *api.Stor
 		nodeReq.Config = util.CloneMap(req.Config)
 
 		// Merge node specific config items into global config.
-		for key, value := range configs[server.Environment.ServerName] {
-			nodeReq.Config[key] = value
-		}
+		maps.Copy(nodeReq.Config, configs[server.Environment.ServerName])
 
 		err = client.CreateStoragePool(nodeReq)
 		if err != nil {
@@ -806,7 +803,7 @@ func storagePoolPut(d *Daemon, r *http.Request) response.Response {
 	targetNode := request.QueryParam(r, "target")
 
 	if targetNode == "" && pool.Status() != api.StoragePoolStatusCreated {
-		return response.BadRequest(fmt.Errorf("Cannot update storage pool global config when not in created state"))
+		return response.BadRequest(errors.New("Cannot update storage pool global config when not in created state"))
 	}
 
 	// Duplicate config for etag modification and generation.
@@ -1034,7 +1031,7 @@ func storagePoolDelete(d *Daemon, r *http.Request) response.Response {
 		}
 
 		if inUse {
-			return response.BadRequest(fmt.Errorf("The storage pool is currently in use"))
+			return response.BadRequest(errors.New("The storage pool is currently in use"))
 		}
 
 		// Get the cluster notifier

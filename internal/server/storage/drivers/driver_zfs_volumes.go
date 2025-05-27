@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -372,7 +373,7 @@ func (d *zfs) CreateVolumeFromBackup(vol Volume, srcBackup backup.Info, srcData 
 	}
 
 	if volExists {
-		return nil, nil, fmt.Errorf("Cannot restore volume, already exists on target")
+		return nil, nil, errors.New("Cannot restore volume, already exists on target")
 	}
 
 	reverter := revert.New()
@@ -1630,9 +1631,7 @@ func (d *zfs) UpdateVolume(vol Volume, changedConfig map[string]string) error {
 	}
 
 	defer func() {
-		for k, v := range old {
-			vol.config[k] = v
-		}
+		maps.Copy(vol.config, old)
 	}()
 
 	// If any of the relevant keys changed, re-apply the quota.
@@ -2488,7 +2487,7 @@ func (d *zfs) DelegateVolume(vol Volume, pid int) error {
 
 	// Check that the current ZFS version supports it.
 	if !zfsDelegate {
-		return fmt.Errorf("Local ZFS version doesn't support delegation")
+		return errors.New("Local ZFS version doesn't support delegation")
 	}
 
 	// Set the property.
@@ -2544,7 +2543,7 @@ func (d *zfs) MigrateVolume(vol Volume, conn io.ReadWriteCloser, volSrcArgs *loc
 	// Handle zfs send/receive migration.
 	if volSrcArgs.MultiSync || volSrcArgs.FinalSync {
 		// This is not needed if the migration is performed using zfs send/receive.
-		return fmt.Errorf("MultiSync should not be used with optimized migration")
+		return errors.New("MultiSync should not be used with optimized migration")
 	}
 
 	var srcMigrationHeader *ZFSMetaDataHeader
@@ -2581,7 +2580,7 @@ func (d *zfs) MigrateVolume(vol Volume, conn io.ReadWriteCloser, volSrcArgs *loc
 
 	// If we haven't negotiated zvol support, ensure volume is not a zvol.
 	if !slices.Contains(volSrcArgs.MigrationType.Features, migration.ZFSFeatureZvolFilesystems) && d.isBlockBacked(vol) {
-		return fmt.Errorf("Filesystem zvol detected in source but target does not support receiving zvols")
+		return errors.New("Filesystem zvol detected in source but target does not support receiving zvols")
 	}
 
 	incrementalStream := true
@@ -3101,7 +3100,7 @@ func (d *zfs) mountVolumeSnapshot(snapVol Volume, snapshotDataset string, mountP
 		// Order is important here, the parent volmode=dev must be set before snapdev=visible otherwise
 		// it won't take effect.
 		if parentVolMode != "dev" {
-			return nil, fmt.Errorf("Parent block volume needs to be mounted first")
+			return nil, errors.New("Parent block volume needs to be mounted first")
 		}
 
 		// Check if snapdev already set visible.
@@ -3360,8 +3359,9 @@ func (d *zfs) VolumeSnapshots(vol Volume, op *operations.Operation) ([]string, e
 	// Filter only the snapshots.
 	snapshots := []string{}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry, "@snapshot-") {
-			snapshots = append(snapshots, strings.TrimPrefix(entry, "@snapshot-"))
+		after, ok := strings.CutPrefix(entry, "@snapshot-")
+		if ok {
+			snapshots = append(snapshots, after)
 		}
 	}
 
@@ -3393,9 +3393,10 @@ func (d *zfs) restoreVolume(vol Volume, snapshotName string, migration bool, op 
 			continue
 		}
 
-		if strings.HasPrefix(entry, "@snapshot-") {
+		after, ok := strings.CutPrefix(entry, "@snapshot-")
+		if ok {
 			// Located a normal snapshot following ours.
-			snapshots = append(snapshots, strings.TrimPrefix(entry, "@snapshot-"))
+			snapshots = append(snapshots, after)
 			continue
 		}
 

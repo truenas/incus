@@ -148,7 +148,7 @@ func (d *tpm) startContainer() (*deviceConfig.RunConfig, error) {
 	// We need to capture the output of the TPM emulator since it contains the device path. To do
 	// that, we wait until something has been written to the log file (stdout redirect), and then
 	// read it.
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		fi, err := os.Stat(logPath)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to stat %q: %w", logPath, err)
@@ -172,7 +172,7 @@ func (d *tpm) startContainer() (*deviceConfig.RunConfig, error) {
 	fields := strings.Split(string(line), " ")
 
 	if len(fields) < 7 {
-		return nil, fmt.Errorf("Failed to get TPM device information")
+		return nil, errors.New("Failed to get TPM device information")
 	}
 
 	_, err = fmt.Sscanf(fields[6], "%d/%d)", &major, &minor)
@@ -182,7 +182,7 @@ func (d *tpm) startContainer() (*deviceConfig.RunConfig, error) {
 
 	// Return error as we were unable to retrieve information regarding the TPM device.
 	if major == 0 && minor == 0 {
-		return nil, fmt.Errorf("Failed to get TPM device information")
+		return nil, errors.New("Failed to get TPM device information")
 	}
 
 	if minor == TPM_MINOR {
@@ -248,7 +248,7 @@ func (d *tpm) startVM() (*deviceConfig.RunConfig, error) {
 
 	// Wait for the socket to be available.
 	exists := false
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		if util.PathExists(socketPath) {
 			exists = true
 			break
@@ -258,7 +258,7 @@ func (d *tpm) startVM() (*deviceConfig.RunConfig, error) {
 	}
 
 	if !exists {
-		return nil, fmt.Errorf("swtpm socket didn't appear within 2s")
+		return nil, errors.New("swtpm socket didn't appear within 2s")
 	}
 
 	reverter.Success()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"slices"
 	"strconv"
@@ -189,9 +190,7 @@ func (n *physical) Validate(config map[string]string) error {
 		return err
 	}
 
-	for k, v := range bgpRules {
-		rules[k] = v
-	}
+	maps.Copy(rules, bgpRules)
 
 	// Validate the configuration.
 	err = n.validate(config, rules)
@@ -435,7 +434,7 @@ func (n *physical) Update(newNetwork api.NetworkPut, targetNode string, clientTy
 		if hostNameChanged {
 			isUsed, err := n.IsUsed(true)
 			if isUsed || err != nil {
-				return fmt.Errorf("Cannot update network parent interface when in use")
+				return errors.New("Cannot update network parent interface when in use")
 			}
 
 			inUse, err := n.checkParentUse(newNetwork.Config)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,7 +41,7 @@ func unixDeviceAttributes(path string) (string, uint32, uint32, error) {
 	} else if stat.Mode&unix.S_IFMT == unix.S_IFCHR {
 		dType = "c"
 	} else {
-		return "", 0, 0, fmt.Errorf("Not a device")
+		return "", 0, 0, errors.New("Not a device")
 	}
 
 	// Return the device information
@@ -205,7 +206,7 @@ func UnixDeviceCreate(s *state.State, idmapSet *idmap.Set, devicesPath string, p
 	// Create the new entry.
 	if !s.OS.RunningInUserNS {
 		if s.OS.Nodev {
-			return nil, fmt.Errorf("Can't create device as devices path is mounted nodev")
+			return nil, errors.New("Can't create device as devices path is mounted nodev")
 		}
 
 		devNum := int(unix.Mkdev(d.Major, d.Minor))
@@ -331,9 +332,7 @@ func unixDeviceSetup(s *state.State, devicesPath string, typePrefix string, devi
 // config then the origin device does not need to be accessed for its file mode.
 func unixDeviceSetupCharNum(s *state.State, devicesPath string, typePrefix string, deviceName string, m deviceConfig.Device, major uint32, minor uint32, path string, defaultMode bool, runConf *deviceConfig.RunConfig) error {
 	configCopy := deviceConfig.Device{}
-	for k, v := range m {
-		configCopy[k] = v
-	}
+	maps.Copy(configCopy, m)
 
 	// Overridng these in the config copy should avoid the need for unixDeviceSetup to stat
 	// the origin device to ascertain this information.
@@ -352,9 +351,7 @@ func unixDeviceSetupCharNum(s *state.State, devicesPath string, typePrefix strin
 // config then the origin device does not need to be accessed for its file mode.
 func unixDeviceSetupBlockNum(s *state.State, devicesPath string, typePrefix string, deviceName string, m deviceConfig.Device, major uint32, minor uint32, path string, defaultMode bool, runConf *deviceConfig.RunConfig) error {
 	configCopy := deviceConfig.Device{}
-	for k, v := range m {
-		configCopy[k] = v
-	}
+	maps.Copy(configCopy, m)
 
 	// Overridng these in the config copy should avoid the need for unixDeviceSetup to stat
 	// the origin device to ascertain this information.
@@ -442,13 +439,7 @@ func unixDeviceRemove(devicesPath string, typePrefix string, deviceName string, 
 		ourEncRelDestFile := ourDev[idx+1:]
 
 		// Look for devices for other devices that match the same path.
-		dupe := false
-		for _, encRelDevFile := range encRelDevFiles {
-			if encRelDevFile == ourEncRelDestFile {
-				dupe = true
-				break
-			}
-		}
+		dupe := slices.Contains(encRelDevFiles, ourEncRelDestFile)
 
 		// If a device has been found that points to the same device inside the instance
 		// then we cannot request it be umounted inside the instance as it's still in use.
@@ -529,7 +520,7 @@ func unixValidDeviceNum(value string) error {
 
 	_, err := strconv.ParseUint(value, 10, 32)
 	if err != nil {
-		return fmt.Errorf("Invalid value for a UNIX device number")
+		return errors.New("Invalid value for a UNIX device number")
 	}
 
 	return nil
@@ -543,7 +534,7 @@ func unixValidUserID(value string) error {
 
 	_, err := strconv.ParseUint(value, 10, 32)
 	if err != nil {
-		return fmt.Errorf("Invalid value for a UNIX ID")
+		return errors.New("Invalid value for a UNIX ID")
 	}
 
 	return nil
@@ -557,7 +548,7 @@ func unixValidOctalFileMode(value string) error {
 
 	_, err := strconv.ParseUint(value, 8, 32)
 	if err != nil {
-		return fmt.Errorf("Invalid value for an octal file mode")
+		return errors.New("Invalid value for an octal file mode")
 	}
 
 	return nil

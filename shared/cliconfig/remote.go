@@ -70,7 +70,7 @@ func (c *Config) GetInstanceServer(name string) (incus.InstanceServer, error) {
 
 	// Quick checks.
 	if remote.Public || remote.Protocol != "incus" {
-		return nil, fmt.Errorf("The remote isn't a private server")
+		return nil, errors.New("The remote isn't a private server")
 	}
 
 	// Get connection arguments
@@ -80,8 +80,9 @@ func (c *Config) GetInstanceServer(name string) (incus.InstanceServer, error) {
 	}
 
 	// Unix socket
-	if strings.HasPrefix(remote.Addr, "unix:") {
-		d, err := incus.ConnectIncusUnix(strings.TrimPrefix(strings.TrimPrefix(remote.Addr, "unix:"), "//"), args)
+	remoteAddr, hasUnixPrefix := strings.CutPrefix(remote.Addr, "unix:")
+	if hasUnixPrefix {
+		d, err := incus.ConnectIncusUnix(strings.TrimPrefix(remoteAddr, "//"), args)
 		if err != nil {
 			var netErr *net.OpError
 
@@ -114,7 +115,7 @@ func (c *Config) GetInstanceServer(name string) (incus.InstanceServer, error) {
 
 	// HTTPs
 	if !slices.Contains([]string{api.AuthenticationMethodOIDC}, remote.AuthType) && (args.TLSClientCert == "" || args.TLSClientKey == "") {
-		return nil, fmt.Errorf("Missing TLS client certificate and key")
+		return nil, errors.New("Missing TLS client certificate and key")
 	}
 
 	var d incus.InstanceServer
@@ -171,8 +172,9 @@ func (c *Config) GetImageServer(name string) (incus.ImageServer, error) {
 	}
 
 	// Unix socket
-	if strings.HasPrefix(remote.Addr, "unix:") {
-		d, err := incus.ConnectIncusUnix(strings.TrimPrefix(strings.TrimPrefix(remote.Addr, "unix:"), "//"), args)
+	remoteAddr, hasUnixPrefix := strings.CutPrefix(remote.Addr, "unix:")
+	if hasUnixPrefix {
+		d, err := incus.ConnectIncusUnix(strings.TrimPrefix(remoteAddr, "//"), args)
 		if err != nil {
 			return nil, err
 		}
@@ -345,7 +347,7 @@ func (c *Config) getConnectionArgs(name string) (*incus.ConnectionArgs, error) {
 		isSSH := pemKey.Type == "OPENSSH PRIVATE KEY"
 		if isEncrypted || isSSH {
 			if c.PromptPassword == nil {
-				return nil, fmt.Errorf("Private key is password protected and no helper was configured")
+				return nil, errors.New("Private key is password protected and no helper was configured")
 			}
 
 			password, err := c.PromptPassword(pathClientKey)

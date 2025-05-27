@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -168,7 +169,7 @@ func SRIOVFindFreeVirtualFunction(s *state.State, parentDev string) (string, int
 		logger.Debugf("Attempting to grow available VFs from %d to %d on device %q", sriovNumVFs, sriovTotalVFs, parentDev)
 
 		// Bump the number of VFs to the maximum if not there yet.
-		err = os.WriteFile(sriovNumVFsFile, []byte(fmt.Sprintf("%d", sriovTotalVFs)), 0o644)
+		err = os.WriteFile(sriovNumVFsFile, fmt.Appendf(nil, "%d", sriovTotalVFs), 0o644)
 		if err != nil {
 			return "", -1, fmt.Errorf("Failed growing available VFs from %d to %d on device %q: %w", sriovNumVFs, sriovTotalVFs, parentDev, err)
 		}
@@ -408,5 +409,5 @@ func SRIOVFindFreeVFAndRepresentor(state *state.State, ovsBridgeName string) (st
 		}
 	}
 
-	return "", "", "", -1, fmt.Errorf("No free virtual function and representor port found")
+	return "", "", "", -1, errors.New("No free virtual function and representor port found")
 }
