@@ -777,7 +777,7 @@ test_storage() {
   rootMinKiB2="720000"
   rootMaxKiB2="850000"
 
-  if [ "$incus_backend" != "dir" ] && [ "$incus_backend" != "truenas" ]; then # truenas is currently limited to >= 1GiB sizes.
+  if [ "$incus_backend" != "dir" ] ; then
     incus launch testimage quota1
     rootOrigSizeKiB=$(incus exec quota1 -- df -P / | tail -n1 | awk '{print $2}')
     rootOrigMinSizeKiB=$((rootOrigSizeKiB-2000))
