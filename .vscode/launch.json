@@ -27,7 +27,7 @@
             "program": "${userHome}/go/bin/incusd",
             "env": {
                 "PATH": "${env:PATH}:${userHome}/go/bin/",
-                "LD_LIBRARY_PATH": "${userHome}/go/deps/raft/.libs/:/home/stux/go/deps/cowsql/.libs/"
+                "LD_LIBRARY_PATH": "${userHome}/go/deps/raft/.libs/:${userHome}/go/deps/cowsql/.libs/"
             },
             "args": [
                 "--group",
@@ -44,7 +44,7 @@
             "program": "${userHome}/go/bin/incusd",
             "env": {
                 "PATH": "${env:PATH}:${userHome}/go/bin/",
-                "LD_LIBRARY_PATH": "${userHome}/go/deps/raft/.libs/:/home/stux/go/deps/cowsql/.libs/"
+                "LD_LIBRARY_PATH": "${userHome}/go/deps/raft/.libs/:${userHome}/go/deps/cowsql/.libs/"
             },
             "args": [
                 "--group",
