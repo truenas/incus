@@ -44,8 +44,6 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		reverter.Add(func() { _ = os.Remove(vol.MountPath()) })
 	}
 
-	reverter.Add(func() { _ = os.Remove(vol.MountPath()) })
-
 	// Look for previously deleted images. (don't look for underlying, or we'll look after we've looked)
 	if vol.volType == VolumeTypeImage {
 		dataset := d.dataset(vol, true)
