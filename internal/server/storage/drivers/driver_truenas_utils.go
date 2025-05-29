@@ -103,9 +103,13 @@ func (d *truenas) setDatasetProperties(dataset string, options ...string) error 
 
 	// TODO: either move the "--" prepending here, or have the -o syntax work!
 
-	optionString := optionsToOptionString(options...)
-	if optionString != "" {
-		args = append(args, "-o", optionString)
+	// optionString := optionsToOptionString(options...)
+	// if optionString != "" {
+	// 	args = append(args, "-o", optionString)
+	// }
+
+	for _, option := range options {
+		args = append(args, fmt.Sprintf("--%s", option))
 	}
 
 	args = append(args, dataset)
