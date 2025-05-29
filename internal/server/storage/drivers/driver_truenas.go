@@ -431,6 +431,7 @@ func (d *truenas) GetResources() (*api.ResourcesStoragePool, error) {
 func (d *truenas) MigrationTypes(contentType ContentType, refresh bool, copySnapshots bool, clusterMove bool, storageMove bool) []localMigration.Type {
 
 	// TODO: investigate "storageMove" that came from the linstor driver.
+
 	var rsyncFeatures []string
 
 	// Do not pass compression argument to rsync if the associated

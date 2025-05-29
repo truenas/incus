@@ -40,6 +40,7 @@ func (d *truenas) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		if err != nil {
 			return err
 		}
+
 		reverter.Add(func() { _ = os.Remove(vol.MountPath()) })
 	}
 
